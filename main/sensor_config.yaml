@@ -1,0 +1,12 @@
+
+ANGLE_SENSORS:
+  sensor1:
+    name: "Rotation sensor"
+    input: [ b1,8 ]               # [Board number, Port number]
+    steps_per_revolution: 360     # Steps per revolution to improve accuracy
+
+RPM_SENSORS:
+  sensor1:
+    name: "Pump RPM"
+    GPIO pin: 4
+    magnets: 14

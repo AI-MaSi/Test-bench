@@ -1,0 +1,12 @@
+
+
+CHANNEL_CONFIGS:
+
+  pump:
+    input_channel: 0              # The index of the input data array. In Python, indexing is zero-based, meaning the first value is at index 0
+    output_channel: 0             # The PWM hat channel, same as printed on the PCB. Also Zero-based!
+    type: pump                    # type of the controlled thing. angle(eg. servo), throttle(eg. motor), switch(eg. LED)
+    offset: 0                     # pump does not use this but im lazy, the validator checks this so just leave this to 0 for now
+    direction: 1                  # change direction. 1 or -1
+    idle: -0.04                   # this value gives nice idle speed when used to control the pump
+    multiplier: 2.0               # how much pump speeds up when channels are active
