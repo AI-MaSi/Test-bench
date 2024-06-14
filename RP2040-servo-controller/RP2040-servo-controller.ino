@@ -9,16 +9,16 @@
 
 // Timing and PID intervals
 unsigned long prevMillisValve1 = 0;
-unsigned long prevMillisValve2 = 0;  // Add timing for the second valve
+unsigned long prevMillisValve2 = 0;
 const int valveInterval = 20;  // Interval for updating valves in milliseconds (50Hz)
 
 // Kalman Filter Angles
 double kalAngleX, kalAngleY;  // Angles calculated by the Kalman filter
-double kalAngleX2, kalAngleY2;  // Add angles for the second IMU
+double kalAngleX2, kalAngleY2;
 
 // PID Setpoints and Variables
 double Setpoint1, Input1, Output1;
-double Setpoint2, Input2, Output2;  // Add PID variables for the second valve
+double Setpoint2, Input2, Output2;
 
 // PID tuning parameters
 float Kp1 = 2.0, Ki1 = 5.0, Kd1 = 1.0;  // PID constants for valve 1
@@ -30,21 +30,21 @@ int lim = 30;  // Limit of the servo
 
 // PID objects
 PID pid1(&Input1, &Output1, &Setpoint1, Kp1, Ki1, Kd1, DIRECT);
-PID pid2(&Input2, &Output2, &Setpoint2, Kp2, Ki2, Kd2, DIRECT);  // Add PID object for the second valve
+PID pid2(&Input2, &Output2, &Setpoint2, Kp2, Ki2, Kd2, DIRECT);
 
 // IMU and Kalman filter setup
 Adafruit_ISM330DHCX ism330dhcx;
-Adafruit_ISM330DHCX ism330dhcx2;  // Add a second IMU
+Adafruit_ISM330DHCX ism330dhcx2;
 Kalman kalmanX, kalmanY;
-Kalman kalmanX2, kalmanY2;  // Add Kalman filter objects for the second IMU
+Kalman kalmanX2, kalmanY2;
 
 // Servo setup
 Servo valve1;
-Servo valve2;  // Add a second servo
+Servo valve2;
 
 // Declaration for IMU update timer
 unsigned long timer = micros();
-unsigned long timer2 = micros();  // Add a timer for the second IMU
+unsigned long timer2 = micros();
 
 // Sensor reader class
 class SensorReader {
@@ -72,14 +72,14 @@ private:
 };
 
 SensorReader sensor1(ism330dhcx);  // Instance of SensorReader
-SensorReader sensor2(ism330dhcx2);  // Add a second instance for the second IMU
+SensorReader sensor2(ism330dhcx2);
 
 void setup() {
   Serial.begin(115200);
   valve1.attach(VALVE1_PIN, 500, 2500); // Attach the servo on the hydraulic valve pin. min max micros
   valve1.write(servo_center);  // Set servo to middle
-  valve2.attach(VALVE2_PIN, 500, 2500); // Attach the second servo
-  valve2.write(servo_center);  // Set second servo to middle
+  valve2.attach(VALVE2_PIN, 500, 2500);
+  valve2.write(servo_center);
 
   if (!ism330dhcx.begin_I2C()) {
     Serial.println("Failed to initialize IMU1!");
@@ -231,7 +231,7 @@ void readSerialSetpoints() {
         Serial.println(lim);
     }
     pid1.SetTunings(Kp1, Ki1, Kd1);  // Apply the new PID tunings if any were updated
-    pid2.SetTunings(Kp2, Ki2, Kd2);  // Apply the new PID tunings for the second valve if any were updated
+    pid2.SetTunings(Kp2, Ki2, Kd2);
 
     // Update servo limits
     pid1.SetOutputLimits((servo_center-lim), (servo_center+lim));
