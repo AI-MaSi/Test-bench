@@ -1,0 +1,14 @@
+
+RP2040:
+  pid1:
+    Kp: 2.0
+    Ki: 1.0
+    Kd: 5.0
+
+    output_limits: (0,180)
+    sample_time: 20
+
+
+
+  # filtering:
+  # only kalman used atm

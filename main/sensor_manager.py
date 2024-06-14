@@ -146,7 +146,7 @@ class RPMSensor:
                 self.pulse_count = 0
                 last_checked_time = current_time
 
-            sleep(0.1)
+            sleep(0.01)
 
     def __start_measurement(self):
         self.thread = threading.Thread(target=self.__calculate_rpm)
