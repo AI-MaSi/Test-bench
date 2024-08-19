@@ -3,19 +3,24 @@ import time
 import matplotlib.pyplot as plt
 
 # Initialize ADC sensors in simulation mode
-sensors = ADC_sensors.ADC_hat(config_file='sensor_config.yaml', simulation_mode=True, frequency=0.2)
+sensors = ADC_sensors.ADC_hat(config_file='sensor_config.yaml', simulation_mode=True, frequency=0.1)
 
 # List available sensors
 sensors.list_sensors()
 time.sleep(1)
 
-# Initialize lists to store raw and filtered data
+# Initialize lists to store data
 time_data = []
-raw_data = {'Pressure': [], 'Angle': []}
-filtered_data = {'Pressure': [], 'Angle': []}
+scaled_data = {}
+filtered_data = {}
+
+# Initialize data structures for each angle sensor
+for sensor_name in sensors.angle_sensor_configs.keys():
+    scaled_data[sensor_name] = []
+    filtered_data[sensor_name] = []
 
 # Time interval between measurements
-time_interval = 0.1
+time_interval = 0.02
 start_time = time.time()
 
 # Set up the plot
@@ -27,49 +32,32 @@ while True:
     current_time = time.time() - start_time
     time_data.append(current_time)
 
-    # Read raw and filtered data
-    raw_readings = sensors.read_raw()
-    #print("Raw Readings:", raw_readings)
+    # Read scaled data
+    scaled_readings = sensors.read_scaled()
 
-    # Read filtered data
-    filtered_readings_pressure = sensors.read_filtered('pressure')
-    #print("Filtered Readings Pressure:", filtered_readings_pressure)
-    filtered_readings_angle = sensors.read_filtered('angle')
-    #print("Filtered Readings Angle:", filtered_readings_angle)
+    # Read filtered data for angle sensors
+    filtered_readings_angle = sensors.read_filtered('angle', return_names=True, filter_type='low_pass')
 
-    # Extract raw values and calculate averages
-    raw_pressure = [raw_readings.get(sensor_config['name'], 0)
-                    for sensor_name, sensor_config in sensors.pressure_sensor_configs.items()]
-    raw_angle = [raw_readings.get(sensor_config['name'], 0)
-                 for sensor_name, sensor_config in sensors.angle_sensor_configs.items()]
-
-    # Calculate average raw values
-    avg_raw_pressure = sum(raw_pressure) / len(raw_pressure) if raw_pressure else 0
-    avg_raw_angle = sum(raw_angle) / len(raw_angle) if raw_angle else 0
-
-    # Extract filtered values
-    filtered_pressure = filtered_readings_pressure[0] if filtered_readings_pressure else 0
-    filtered_angle = filtered_readings_angle[0] if filtered_readings_angle else 0
-
-    # Append data
-    raw_data['Pressure'].append(avg_raw_pressure)
-    raw_data['Angle'].append(avg_raw_angle)
-    filtered_data['Pressure'].append(filtered_pressure)
-    filtered_data['Angle'].append(filtered_angle)
+    # Update data for each angle sensor
+    for sensor_name, _, value in filtered_readings_angle:
+        scaled_data[sensor_name].append(scaled_readings.get(sensor_name, 0))
+        filtered_data[sensor_name].append(value)
 
     # Clear and update the plot
     ax.clear()
-    ax.plot(time_data, raw_data['Pressure'], label='Raw Pressure', color='blue')
-    ax.plot(time_data, raw_data['Angle'], label='Raw Angle', color='green')
-    ax.plot(time_data, filtered_data['Pressure'], label='Filtered Pressure', color='red')
-    ax.plot(time_data, filtered_data['Angle'], label='Filtered Angle', color='orange')
+
+    # Plot angle data
+    for sensor_name in sensors.angle_sensor_configs.keys():
+        ax.plot(time_data, scaled_data[sensor_name], label=f'Scaled {sensor_name}', linestyle='--')
+        ax.plot(time_data, filtered_data[sensor_name], label=f'Filtered {sensor_name}')
 
     ax.set_xlabel('Time (seconds)')
-    ax.set_ylabel('Value')
+    ax.set_ylabel('Angle')
     ax.legend()
-    ax.set_title('Sensor Data Plot')
+    ax.set_title('Angle Sensor Data')
     ax.grid(True)
 
+    plt.tight_layout()
     plt.pause(time_interval)
 
     # Sleep for the time interval

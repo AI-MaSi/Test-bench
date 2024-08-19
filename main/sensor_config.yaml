@@ -24,21 +24,36 @@ ADC_CONFIG:
   # (Continuous conversion) Continuously convert analog signals to digital, suitable for real-time monitoring
 
 
-FILTERING_CONFIG:
-  default_filter: "low_pass"
+FILTER_CONFIG:
+  default_filter: "kalman"
   # Specify the default filter to be used if not specified in individual sensors
   # Options: "low_pass", "kalman"
 
   low_pass:
-    alpha: 0.5
+    alpha: 0.6
     # Low-pass filter alpha value, 0 < alpha <= 1
 
   kalman:
-    Q: 1e-5
-    R: 1e-2
-    P: 1.0
-    x0: 0.0
-    # Kalman filter configuration parameters
+    # Process noise covariance: This parameter represents the estimated variance of the process noise.
+    # Increasing this value makes the filter more responsive to changes in the state.
+    # If the system is expected to have more dynamic behavior or the model is less accurate, increase Q.
+    Q: 0.0001
+
+    # Measurement noise covariance: This parameter represents the estimated variance of the measurement noise.
+    # Decreasing this value increases the filter's reliance on the measurements rather than the model predictions.
+    # If the measurements are more reliable, decrease R. If the measurements are noisy, increase R.
+    R: 0.001
+
+    # Error covariance: This parameter represents the initial estimate of the uncertainty in the state estimate.
+    # A lower value means the filter starts with higher confidence in the initial estimate, leading to quicker adjustments.
+    # If the initial estimate is expected to be accurate, lower P. Otherwise, if unsure, a higher value may be used initially.
+    P: 0.7
+
+    # Initial state estimate: This is the starting point for the state estimation.
+    # It should be set based on prior knowledge or a reasonable guess of the initial state.
+    # A value of 0.0 is used here as a default, but it can be adjusted according to the known starting conditions.
+    x0: 0.0  # Example: Initial guess of the state, adjust if there is prior information about the initial state
+
 
   # Optional: Individual sensor-specific filter configurations can be added here if needed
   # For example:
