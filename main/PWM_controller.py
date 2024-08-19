@@ -10,7 +10,7 @@ except ImportError:
     SERVOKIT_AVAILABLE = False
 
 
-class ExcavatorController:
+class PWM_hat:
     def __init__(self, inputs, config_file, simulation_mode=False, pump_variable=True,
                  tracks_disabled=False, input_rate_threshold=5, deadzone=6):
 
@@ -376,3 +376,8 @@ class ExcavatorController:
                 print(f"Input {input_num}: {names}")
             else:
                 print(f"Input {input_num}: Not assigned")
+
+
+# TODO: Servokit stub
+class ServoKitStub:
+    pass

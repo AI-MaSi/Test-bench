@@ -2,15 +2,15 @@
 
 ADC_CONFIG:
   i2c_addresses:
-    b1: [0x6E,0x6F]   # I2C address for board 1
-    b2: [0,0]         # I2C address PLACEHOLDER for board 2
-    # ...
+    b1: [0x6E, 0x6F]   # I2C address for board 1
+    b2: [0, 0]         # I2C address PLACEHOLDER for board 2
+    # Add more boards as needed
 
   pga_gain: 1
   # Set the gain of the PGA on the chip
   # Parameters: gain - 1, 2, 4, 8
 
-  bit_rate: 16
+  bit_rate: 14
   # Parameters: rate - 12, 14, 16, 18. Samples Per Second (SPS)
   # 12 = 12 bit (240SPS max)
   # 14 = 14 bit (60SPS max)
@@ -20,37 +20,70 @@ ADC_CONFIG:
   conversion_mode: 1
   # Set the conversion mode for the ADC
   # Parameters: mode - 0 = One-shot conversion, 1 = Continuous conversion
-
   # (One-shot conversion) Perform a single conversion upon trigger, conserving power and resources for infrequent measurements
   # (Continuous conversion) Continuously convert analog signals to digital, suitable for real-time monitoring
+
+
+FILTERING_CONFIG:
+  default_filter: "low_pass"
+  # Specify the default filter to be used if not specified in individual sensors
+  # Options: "low_pass", "kalman"
+
+  low_pass:
+    alpha: 0.5
+    # Low-pass filter alpha value, 0 < alpha <= 1
+
+  kalman:
+    Q: 1e-5
+    R: 1e-2
+    P: 1.0
+    x0: 0.0
+    # Kalman filter configuration parameters
+
+  # Optional: Individual sensor-specific filter configurations can be added here if needed
+  # For example:
+  # sensor1:
+  #   filter: "kalman"
+  #   Q: 1e-6
+  #   R: 1e-2
+  #   P: 1.0
+  #   x0: 0.0
+
 
 #--------------------------------------------------------------
 
 RPM_SENSORS:
   RPM_pump:
-    GPIO pin: 21
+    GPIO_pin: 21
     magnets: 14
+    # GPIO pin number for the sensor and the number of magnets on the rotating part
 
 
 ANGLE_SENSORS:
   sensor1:
-    name: "LiftBoom"
-    input: [ b1,8 ]               # [Board number, Port number]
+    name: "LiftBoom angle"
+    input: [b1, 8]               # [Board number, Port number]
     steps_per_revolution: 360     # Steps per revolution to improve accuracy
+    filter: "kalman"              # Optional: Override the default filter
+
+  # Add more angle sensors as needed
 
 
 PRESSURE_SENSORS:
   sensor1:
     name: "Pump"                  # Name
-    input: [b1,1]                 # [Board number, Port number]
+    input: [b1, 1]                # [Board number, Port number]
     calibration_value: 1.000      # Multiplier for calibrating measurements
+    filter: "low_pass"            # Optional: Override the default filter
 
   sensor5:
     name: "LiftBoom extension"
-    input: [b1,5]
+    input: [b1, 5]
     calibration_value: 1.000
 
   sensor6:
     name: "LiftBoom retraction"
-    input: [b1,6]
+    input: [b1, 6]
     calibration_value: 1.000
+
+  # Add more pressure sensors as needed

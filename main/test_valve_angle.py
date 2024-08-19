@@ -1,10 +1,10 @@
 # this file is used to find the center position of the valves, and measure the dead area
 
 import pygame
-import masi_driver
+from PWM_controller import PWM_hat
 import yaml
 from time import sleep
-import ADC_sensors
+from ADC_sensors import ADC_hat
 
 CONFIG_FILE = 'test_bench_config.yaml'
 
@@ -24,11 +24,11 @@ with open(CONFIG_FILE, 'r') as file:
     servo_angle_limit = config['CHANNEL_CONFIGS']['test_servo'].get('multiplier_positive', 30)   # Default to +-30 degrees if not specified
 
 # Initialize the pump driver
-pwm_driver = masi_driver.ExcavatorController(deadzone=0, simulation_mode=False, inputs=2, input_rate_threshold=1,
+pwm_driver = PWM_hat(deadzone=0, simulation_mode=False, inputs=2, input_rate_threshold=1,
                                              config_file='test_bench_config.yaml')
 
 # Initialize the pressure sensors
-adc_sensors = ADC_sensors.SensorManager(config_file='sensor_config.yaml')
+adc_sensors = ADC_hat(config_file='sensor_config.yaml')
 
 # Function to stop the ESC beep if first start
 def reset_pwm():
@@ -107,14 +107,16 @@ while running:
     servo_angles = pwm_driver.update_values(values, min_cap=min_cap, return_servo_angles=True)
 
     # Read pressure sensors
-    pressure_readings = adc_sensors.read_pressure(return_names=True)
+    pressure_readings = adc_sensors.read_pressure(alpha=1.0, return_names=True)
     # output will be: sensor_idx_name, sensor_config_name, value
+    angle_readings = adc_sensors.read_angle(alpha=1.0)
 
     window.fill((0, 0, 0))
 
     pump_text = font.render(f'Pump Value: {pump_value:.3f}', True, (255, 255, 255))
     servo_text = font.render(f'Servo Input: {servo_input:.3f}', True, (255, 255, 255))
     valve_text = font.render(f'Valve Angle: {servo_angles[0]:.1f}°', True, (255, 255, 255))
+    boomAngle_text = font.render(f'Boom Angle: {angle_readings[0][1]:.1f}°', True, (255, 255, 255))
 
     instructions_text1 = small_font.render("L/R arrows: Adjust pump", True, (255, 255, 255))
     instructions_text2 = small_font.render("U/D arrows: Adjust servo", True, (255, 255, 255))
@@ -125,6 +127,7 @@ while running:
     window.blit(pump_text, (50, 50))
     window.blit(servo_text, (50, 100))
     window.blit(valve_text, (50, 150))
+    window.blit(boomAngle_text, (275, 150))
 
     # Render instructions
     window.blit(instructions_text1, (50, 200))

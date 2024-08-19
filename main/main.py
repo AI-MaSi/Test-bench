@@ -338,8 +338,8 @@ def update_sensor_info():
         # Update angle sensor1 information
         raw_angle, calibrated_angle = angle_readings[0]  # Assuming the first value is from angle sensor1
 
-        raw_angle_label.config(text=f"Raw: {raw_angle:.1f}°")
-        calibrated_angle_label.config(text=f"Calibrated: {calibrated_angle:.1f}°")
+        raw_angle_label.config(text=f"Raw: {raw_angle:.1f}Â°")
+        calibrated_angle_label.config(text=f"Calibrated: {calibrated_angle:.1f}Â°")
 
         # Calculate angular velocity
         current_time = time.time()
@@ -347,7 +347,7 @@ def update_sensor_info():
             time_diff = current_time - prev_time
             angle_diff = calibrated_angle - prev_angle
             angular_velocity = angle_diff / time_diff
-            angular_velocity_label.config(text=f"Angular Velocity: {angular_velocity:.1f}°/s")
+            angular_velocity_label.config(text=f"Angular Velocity: {angular_velocity:.1f}Â°/s")
         else:
             angular_velocity_label.config(text="Angular Velocity: N/A")
 
