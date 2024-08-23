@@ -4,30 +4,56 @@ import yaml
 
 try:
     from adafruit_servokit import ServoKit
-
     SERVOKIT_AVAILABLE = True
 except ImportError:
     SERVOKIT_AVAILABLE = False
+
+class ServoKitStub:
+    def __init__(self, channels):
+        self.channels = channels
+        self.servo = [ServoStub() for _ in range(channels)]
+        self.continuous_servo = [ContinuousServoStub() for _ in range(channels)]
+
+class ServoStub:
+    def __init__(self):
+        self._angle = 90
+
+    @property
+    def angle(self):
+        return self._angle
+
+    @angle.setter
+    def angle(self, value):
+        self._angle = max(0, min(180, value))
+        print(f"Servo angle set to: {self._angle}")
+
+class ContinuousServoStub:
+    def __init__(self):
+        self._throttle = 0
+
+    @property
+    def throttle(self):
+        return self._throttle
+
+    @throttle.setter
+    def throttle(self, value):
+        self._throttle = max(-1, min(1, value))
+        print(f"Continuous servo throttle set to: {self._throttle}")
 
 
 class PWM_hat:
     def __init__(self, inputs, config_file, simulation_mode=False, pump_variable=True,
                  tracks_disabled=False, input_rate_threshold=5, deadzone=6):
 
-        # full_name = f"{config_file}.yaml"
-
         pwm_channels = 16
         print(f"PWM channels in use: {pwm_channels}")
 
-        # Load configs from .yaml file
+        self.simulation_mode = simulation_mode
+
         with open(config_file, 'r') as file:
             configs = yaml.safe_load(file)
             self.channel_configs = configs['CHANNEL_CONFIGS']
-            # general_settings = configs['GENERAL_SETTINGS']
-            # exception if not available
 
-        self.simulation_mode = simulation_mode
-        # self.toggle_pump = toggle_pump
         self.pump_variable = pump_variable
         self.tracks_disabled = tracks_disabled
 
@@ -44,36 +70,34 @@ class PWM_hat:
 
         if SERVOKIT_AVAILABLE and not self.simulation_mode:
             self.kit = ServoKit(channels=pwm_channels)
-        elif not SERVOKIT_AVAILABLE and not self.simulation_mode:
-            raise Exception("ServoKit is not available but required for non-simulation mode.")
         else:
-            print("Simulation mode activated! Simulated drive prints will be used.")
+            if not self.simulation_mode:
+                print("ServoKit is not available. Falling back to simulation mode.")
+            print("Using ServoKitStub for simulation.")
+            self.kit = ServoKitStub(channels=pwm_channels)
 
         if self.num_inputs < len(unique_input_channels):
-            print(
-                f"Warning: The number of inputs specified ({self.num_inputs}) is less than the number of unique input channels used in channel_configs ({len(unique_input_channels)}). This may result in some inputs not being correctly mapped.")
+            print(f"Warning: The number of inputs specified ({self.num_inputs}) is less than the number of unique input channels used in channel_configs ({len(unique_input_channels)}). This may result in some inputs not being correctly mapped.")
             sleep(3)
         elif self.num_inputs > len(unique_input_channels):
-            print(
-                f"Warning: The number of inputs specified ({self.num_inputs}) is more than the number of unique input channels used in channel_configs ({len(unique_input_channels)}). This will result in some inputs being  left out.")
+            print(f"Warning: The number of inputs specified ({self.num_inputs}) is more than the number of unique input channels used in channel_configs ({len(unique_input_channels)}). This will result in some inputs being left out.")
             sleep(3)
 
         self.input_counter = 0
         self.running = None
         self.monitor_thread = None
         self.input_rate_threshold = input_rate_threshold
-        # self.current_hz = None
 
         self.center_val_servo = 90
         self.deadzone = deadzone
 
         self.return_servo_angles = False
-        # Create a list to store the angles
         self.servo_angles = []
 
         self.reset()
         self.validate_configuration()
         self.start_monitoring()
+
 
     def validate_configuration(self):
         required_keys = ['type', 'input_channel', 'output_channel', 'direction', 'offset']
@@ -195,7 +219,7 @@ class PWM_hat:
 
         self.__use_values(self.values)
 
-        #TODO: make better asshole
+
         if self.return_servo_angles:
             angles_to_return = self.servo_angles.copy()  # Make a copy to return
             self.servo_angles.clear()  # Clear the original list
@@ -210,70 +234,51 @@ class PWM_hat:
 
         if input_channel is None:
             if self.pump_variable:
-                # Calculate the number of active channels that affect the pump
                 active_channels_count = sum(1 for channel, config in self.channel_configs.items()
                                             if config.get('affects_pump', False) and abs(
                     values[config['output_channel']]) > 0)
             else:
-                active_channels_count = 2  # Static value if not variable
+                active_channels_count = 2
 
-            # Calculate the pump's throttle setting
             throttle_value = pump_idle + ((pump_multiplier / 100) * active_channels_count)
         else:
-            # Use the value from the input channel to control the pump speed
             throttle_value = values[input_channel]
 
-        throttle_value = max(-1.0, min(1.0, throttle_value))  # Ensure throttle is within valid range
+        throttle_value = max(-1.0, min(1.0, throttle_value))
 
-        if self.simulation_mode:
-            print(
-                f"Pump control: {'input_channel' if input_channel else 'active_channels_count'} with throttle setting {throttle_value}")
-        else:
-            self.kit.continuous_servo[pump_channel].throttle = throttle_value
+        self.kit.continuous_servo[pump_channel].throttle = throttle_value
 
     def handle_angles(self, values):
-
         for channel_name, config in self.channel_configs.items():
             if config['type'] == 'angle':
                 if self.tracks_disabled and channel_name in ['trackL', 'trackR']:
-                    continue  # Skip if tracks are disabled
+                    continue
 
                 output_channel = config['output_channel']
-                if output_channel >= len(values):  # Validate index
-                    if self.simulation_mode:
-                        print(f"Simulating channel '{channel_name}': No data available.")
+                if output_channel >= len(values):
+                    print(f"Channel '{channel_name}': No data available.")
                     continue
 
                 input_value = values[output_channel]
                 center = self.center_val_servo + config['offset']
 
-                # Handling positive and negative inputs with respective gamma and multipliers
                 if input_value >= 0:
                     gamma = config.get('gamma_positive', 1)
                     multiplier = config.get('multiplier_positive', 1)
-                    normalized_input = input_value  # input_value is already [0, 1]
+                    normalized_input = input_value
                 else:
                     gamma = config.get('gamma_negative', 1)
                     multiplier = config.get('multiplier_negative', 1)
-                    normalized_input = -input_value  # Convert to positive
+                    normalized_input = -input_value
 
-                # Apply gamma correction safely
                 adjusted_input = normalized_input ** gamma
                 gamma_corrected_value = adjusted_input if input_value >= 0 else -adjusted_input
 
-                # Calculate final angle using the directionally adjusted multiplier
                 angle = center + (gamma_corrected_value * multiplier * config['direction'])
-                angle = max(0, min(180, angle))  # Clamp to valid servo range
+                angle = max(0, min(180, angle))
 
-                if self.simulation_mode:
-                    print(f"Simulating channel '{channel_name}': angle value '{angle}' ({input_value}).")
-                else:
-                    try:
-                        self.kit.servo[config['output_channel']].angle = angle
-                    except Exception as e:
-                        print(f"Failed to set angle for {channel_name}: {e}")
+                self.kit.servo[config['output_channel']].angle = angle
 
-                # Collect the angle in the list
                 if self.return_servo_angles:
                     self.servo_angles.append(angle)
 
@@ -288,10 +293,6 @@ class PWM_hat:
         # more different
 
     def reset(self, reset_pump=True, pump_reset_point=-1.0):
-        if self.simulation_mode:
-            # print("Simulated reset")
-            return
-
         for config in self.channel_configs.values():
             if config['type'] == 'angle':
                 self.kit.servo[config['output_channel']].angle = self.center_val_servo + config.get('offset', 0)
@@ -309,7 +310,7 @@ class PWM_hat:
         print(f"Threshold rate set to: {self.input_rate_threshold}Hz")
 
     def set_deadzone(self, int_value):
-        if not isinstance(int_value, (int)):
+        if not isinstance(int_value, int):
             # raise TypeError("Deadzone value must be an integer.")
             print("Deadzone value must be an integer.")
             return
@@ -377,7 +378,3 @@ class PWM_hat:
             else:
                 print(f"Input {input_num}: Not assigned")
 
-
-# TODO: Servokit stub
-class ServoKitStub:
-    pass

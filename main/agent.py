@@ -5,6 +5,9 @@ For PID control: python3 agent.py --mode pid
 For interactive mode: python3 agent.py --mode interactive
 """
 
+import requests
+import json
+import threading
 import torch
 import torch.nn.functional as F
 import random
@@ -28,7 +31,7 @@ from PID import PID
 # TODO: stuff
 # ----------------------------------------
 
-LOOP_HZ = 30  # Control loop frequency in Hz
+LOOP_HZ = 20  # Control loop frequency in Hz
 TIME_STEPS = 200  # Maximum number of time steps per episode
 
 MAX_MEMORY = 1_000_000  # Increased from 100,000
@@ -37,6 +40,124 @@ LR = 0.001
 
 # not used yet
 FULLY_TRAINED = 10000    # points to stop training early
+
+
+class XRCommunicator:
+    def __init__(self, env, server_url='http://localhost:8000'):
+        self.env = env
+        self.server_url = server_url
+        self.latest_data = {
+            'pump_pressure': 0,
+            'boom_extraction_pressure': 0,
+            'boom_retraction_pressure': 0,
+            'pump_control_value': 0,
+            'servo_angle': 0,
+            'boom_angle': 0,
+            'button': None,
+            'slider': 45  # Default to midpoint
+        }
+        self.lock = threading.Lock()
+        self.running = True
+
+    def start(self):
+        self.send_thread = threading.Thread(target=self.send_data_loop)
+        self.receive_thread = threading.Thread(target=self.receive_data_loop)
+        self.send_thread.start()
+        self.receive_thread.start()
+
+    def stop(self):
+        self.running = False
+        self.send_thread.join()
+        self.receive_thread.join()
+
+    def send_data_loop(self):
+        while self.running:
+            try:
+                self.update_local_data()
+                data = {'values': list(self.latest_data.values())}
+                response = requests.post(f'{self.server_url}/send_data/client2', json=data, timeout=1)
+                if response.status_code == 200:
+                    print(f"Sent: {data}")
+                else:
+                    print(f"Failed to send data. Status code: {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                print(f"Send request failed: {e}")
+            time.sleep(0.05)  # 50ms delay
+
+    def receive_data_loop(self):
+        while self.running:
+            try:
+                response = requests.get(f'{self.server_url}/receive_data/client2', timeout=1)
+                if response.status_code == 200:
+                    received_data = response.json()
+                    self.update_received_data(received_data)
+                    print(f"Received: {received_data}")
+                else:
+                    print(f"Failed to receive data. Status code: {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                print(f"Receive request failed: {e}")
+            time.sleep(0.05)  # 50ms delay
+
+    def update_local_data(self):
+        with self.lock:
+            self.latest_data['pump_pressure'] = self.env.adc.read_pressure()[0]
+            self.latest_data['boom_extraction_pressure'] = self.env.adc.read_pressure()[1]
+            self.latest_data['boom_retraction_pressure'] = self.env.adc.read_pressure()[2]
+            self.latest_data['pump_control_value'] = self.env.pwm.values[0]
+            _, servo_angle = self.env.pwm.update_values([0.070, self.env.pwm.values[1]], return_servo_angles=True)
+            self.latest_data['servo_angle'] = servo_angle
+            self.latest_data['boom_angle'] = self.env.current_angle
+
+    def update_received_data(self, received_data):
+        with self.lock:
+            if 'button' in received_data:
+                self.latest_data['button'] = received_data['button']
+            if 'slider' in received_data:
+                self.latest_data['slider'] = received_data['slider']
+
+    def get_latest_data(self):
+        with self.lock:
+            return self.latest_data.copy()
+
+
+def run_xr_mode(env, agent, pid_controller):
+    communicator = XRCommunicator(env)
+    communicator.start()
+
+    try:
+        while True:
+            data = communicator.get_latest_data()
+
+            # Update target angle based on slider value
+            env.target_angle = data['slider']
+
+            # Choose between RL and PID based on button state
+            if data['button'] == 1:
+                # Use RL
+                state = env.update_state()
+                action = agent.get_action(state)
+            else:
+                # Use PID
+                current_angle = env.current_angle
+                pid_controller.SetPoint = env.target_angle
+                pid_controller.update(current_angle)
+                action = pid_controller.output
+                action = max(-1, min(1, action))  # Clamp to [-1, 1]
+                action = -action  # Flip output
+
+            # Apply the action
+            next_state, reward, done = env.step(action)
+
+            # Update the pump control value in the data
+            data['pump_control_value'] = env.pwm.values[0]
+
+            time.sleep(1 / LOOP_HZ)  # Maintain the loop frequency
+
+    except KeyboardInterrupt:
+        print("XR mode stopped.")
+    finally:
+        communicator.stop()
+
 
 class TestBenchEnv:
     def __init__(self, sensor, pwm_driver, max_angle, min_angle):
@@ -573,9 +694,9 @@ if __name__ == '__main__':
     # Boltzmann exploration:
     #agent.set_exploration_type("boltzmann")
 
-
-
-    if args.mode == 'train':
+    if args.mode == 'xr':
+        run_xr_mode(env, agent, pid_controller)
+    elif args.mode == 'train':
         # Load PID data and prefill agent's memory
         pid_data = load_pid_data('pid_data/pid_training_data.csv')
         agent.prefill_memory(pid_data)
@@ -587,9 +708,6 @@ if __name__ == '__main__':
         run_pid(env, pid_controller, save_data=True)
     elif args.mode == 'interactive':
         interactive_mode(env, agent, pid_controller)
-
-
-    #scores, mean_scores = train(env, agent, debug=True)
 
     plt.ioff()  # Turn off interactive mode
     plt.show()  # Keep the final plot displayed
