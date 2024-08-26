@@ -9,15 +9,15 @@ except ImportError:
     print("ADCPi module not found. Running in simulation mode.")
 
 class ADC_hat:
-    def __init__(self, config_file, decimals=2, simulation_mode=False, min_voltage=0.5, max_voltage=4.5, frequency=1.0):
+    def __init__(self, config_file, decimals=2, simulation_mode=False, min_sim_voltage=0.5, max_sim_voltage=4.5, frequency=1.0):
         """
         Initialize ADC_hat with configuration from a YAML file.
 
         :param config_file: Path to the YAML configuration file.
         :param decimals: Number of decimal places for calibration values.
         :param simulation_mode: Whether to run in simulation mode.
-        :param min_voltage: Minimum voltage for the simulated ADC.
-        :param max_voltage: Maximum voltage for the simulated ADC.
+        :param min_sim_voltage: Minimum voltage for the SIMULATED ADC.
+        :param max_sim_voltage: Maximum voltage for the SIMULATED ADC.
         :param frequency: Frequency of the sine wave for simulation.
         """
         self.decimals = decimals
@@ -26,14 +26,14 @@ class ADC_hat:
         if simulation_mode:
             # Replace ADCPi with a stub for simulation
             global ADCPi
-            ADCPi = lambda addr1, addr2, bit_rate: ADCPiStub(addr1, addr2, bit_rate, min_voltage, max_voltage, frequency)
+            ADCPi = lambda addr1, addr2, bit_rate: ADCPiStub(addr1, addr2, bit_rate, min_sim_voltage, max_sim_voltage, frequency)
             print("Running in simulation mode.")
 
         # Load configuration from YAML file
         with open(config_file, 'r') as file:
             configs = yaml.safe_load(file)
-            self.pressure_sensor_configs = configs.get('PRESSURE_SENSORS', {})
-            self.angle_sensor_configs = configs.get('ANGLE_SENSORS', {})
+            self.pressure_sensors = configs.get('PRESSURE_SENSORS', {})
+            self.angle_sensors = configs.get('ANGLE_SENSORS', {})
             self.i2c_addresses = configs['ADC_CONFIG']['i2c_addresses']
             self.pga_gain = configs['ADC_CONFIG']['pga_gain']
             self.bit_rate = configs['ADC_CONFIG']['bit_rate']
@@ -47,26 +47,23 @@ class ADC_hat:
         self.pressure_data = {}
         self.angle_data = {}
         self.calibrated_angle_data = {}
-        self.min_calibrated_angle = {}
-        self.max_calibrated_angle = {}
-        self.min_calibrated_pressure = {}
-        self.max_calibrated_pressure = {}
+        self.min_angle = {}
+        self.max_angle = {}
+        self.min_pressure = {}
+        self.max_pressure = {}
 
         self.initialize_adc()
 
     def initialize_adc(self):
-        """
-        Initialize ADC instances for boards based on their I2C addresses.
-        """
         board_needs_initialization = {board_name: False for board_name in self.i2c_addresses.keys()}
 
         # Determine which boards need initialization
-        for sensor_config in self.pressure_sensor_configs.values():
+        for sensor_config in self.pressure_sensors.values():
             board_name = sensor_config['input'][0]
             if board_name in board_needs_initialization:
                 board_needs_initialization[board_name] = True
 
-        for sensor_config in self.angle_sensor_configs.values():
+        for sensor_config in self.angle_sensors.values():
             board_name = sensor_config['input'][0]
             if board_name in board_needs_initialization:
                 board_needs_initialization[board_name] = True
@@ -97,44 +94,102 @@ class ADC_hat:
             return {}
 
         raw_readings = {}
-        for sensor_config in self.pressure_sensor_configs.values():
-            name = sensor_config['name']
-            voltage = self._read_raw_internal(sensor_config)
+        for sensor_name, sensor_config in {**self.pressure_sensors, **self.angle_sensors}.items():
+            voltage = self._read_raw(sensor_config)
             if voltage is not None:
-                raw_readings[name] = voltage
-
-        for sensor_config in self.angle_sensor_configs.values():
-            name = sensor_config['name']
-            voltage = self._read_raw_internal(sensor_config)
-            if voltage is not None:
-                raw_readings[name] = voltage
+                raw_readings[sensor_name] = voltage
 
         return raw_readings
 
-    def read_scaled(self):
+    def _update_sensor_range(self, sensor_type, sensor_name, value):
+        """
+        Update the minimum and maximum range for a sensor.
+
+        :param sensor_type: 'pressure' or 'angle' indicating the type of sensor.
+        :param sensor_name: Name of the sensor to update.
+        :param value: The current value to compare.
+        """
+        if sensor_type == 'pressure':
+            min_dict, max_dict = self.min_pressure, self.max_pressure
+        elif sensor_type == 'angle':
+            min_dict, max_dict = self.min_angle, self.max_angle
+        else:
+            print(f"Unknown sensor type: {sensor_type}")
+            return
+
+        if sensor_name not in min_dict or value < min_dict[sensor_name]:
+            min_dict[sensor_name] = value
+        if sensor_name not in max_dict or value > max_dict[sensor_name]:
+            max_dict[sensor_name] = value
+
+    def read_scaled(self, read=None):
         """
         Read and scale the sensor data.
+
+        :param read: Optional; Specify 'pressure', 'angle', or None to read both types.
+        :return: A dictionary of scaled sensor readings.
         """
-        if not self.initialized:
-            print("ADCPi not initialized!")
-            return {}
-
         scaled_readings = {}
-        for sensor_name, sensor_config in self.pressure_sensor_configs.items():
-            voltage = self._read_raw_internal(sensor_config)
-            if voltage is not None:
-                scaled_value = self.calibrate_pressure(voltage, sensor_config)
-                scaled_readings[sensor_name] = scaled_value
 
-        for sensor_name, sensor_config in self.angle_sensor_configs.items():
-            voltage = self._read_raw_internal(sensor_config)
-            if voltage is not None:
-                scaled_value = self.calibrate_angle(voltage, sensor_config)
-                scaled_readings[sensor_name] = scaled_value
+        if read is None or read == 'pressure':
+            for sensor_name, sensor_config in self.pressure_sensors.items():
+                voltage = self._read_raw(sensor_config)
+                if voltage is not None:
+                    scaled_value = self.calibrate_pressure(voltage, sensor_config)
+                    scaled_readings[sensor_name] = scaled_value
+                    # Update pressure range
+                    self._update_sensor_range('pressure', sensor_name, scaled_value)
+
+        if read is None or read == 'angle':
+            for sensor_name, sensor_config in self.angle_sensors.items():
+                voltage = self._read_raw(sensor_config)
+                if voltage is not None:
+                    scaled_value = self.calibrate_angle(voltage, sensor_config)
+                    scaled_readings[sensor_name] = scaled_value
+                    # Update angle range
+                    self._update_sensor_range('angle', sensor_name, scaled_value)
 
         return scaled_readings
 
-    def _read_raw_internal(self, sensor_config):
+    def read_filtered(self, read=None):
+        # Step 1: Read and scale the sensor data
+        scaled_data = self.read_scaled(read)
+        #print(f"Scaled data: {scaled_data}")
+
+        # Step 2: Apply filtering to the scaled data
+        filtered_data = {}
+        for sensor_name, scaled_value in scaled_data.items():
+            sensor_config = self.pressure_sensors.get(sensor_name) or self.angle_sensors.get(sensor_name)
+            if sensor_config:
+                # Apply the sensor-specific filter
+                sensor_filter_type = sensor_config.get('filter', self.filter_configs.get('default_filter', 'kalman'))
+                filtered_value = self._apply_filter([scaled_value], sensor_filter_type, sensor_name)[
+                    0]  # Extract the filtered value
+
+                # Determine whether this is an angle or pressure sensor
+                if sensor_name in self.angle_sensors:
+                    min_angle = self.min_angle.get(sensor_name)
+                    max_angle = self.max_angle.get(sensor_name)
+
+                    if max_angle > min_angle:
+                        adjusted_value = (filtered_value - min_angle) / (max_angle - min_angle) * (
+                                    max_angle - min_angle)
+                    else:
+                        adjusted_value = filtered_value
+
+                    # Update the angle range with the adjusted value
+                    self._update_sensor_range('angle', sensor_name, adjusted_value)
+                    filtered_data[sensor_name] = adjusted_value
+                    #print(f"Updated angle data for {sensor_name}: {adjusted_value}")
+                else:
+                    # For pressure sensors, just use the filtered value
+                    filtered_data[sensor_name] = filtered_value
+                    #print(f"Updated pressure data for {sensor_name}: {filtered_value}")
+
+        #print(f"Filtered data: {filtered_data}")
+        return filtered_data
+
+    def _read_raw(self, sensor_config):
         """
         Read raw voltage based on the sensor configuration.
 
@@ -174,16 +229,9 @@ class ADC_hat:
         steps_per_revolution = sensor_config.get('steps_per_revolution', 360)
         angle = round((voltage - 0.5) * steps_per_revolution / (4.5 - 0.5), self.decimals)
 
-        if self.min_voltage.get(sensor_config['name']) is None or voltage < self.min_voltage[sensor_config['name']]:
-            self.min_voltage[sensor_config['name']] = max(voltage, 0)
+        return angle
 
-        calibrated_angle = round(
-            angle - (self.min_voltage[sensor_config['name']] - 0.5) * steps_per_revolution / (4.5 - 0.5),
-            self.decimals)
-
-        return calibrated_angle
-
-    def _apply_filter(self, data, filter_type=None, sensor_name=None):
+    def _apply_filter(self, data, filter_type, sensor_name=None):
         """
         Apply the specified filter to the data.
 
@@ -192,14 +240,13 @@ class ADC_hat:
         :param sensor_name: Name of the sensor for sensor-specific filter settings.
         :return: Filtered data.
         """
-        if filter_type is None:
-            filter_type = self.filter_configs.get('default_filter', 'kalman')
-
         filter_settings = self.filter_configs.get(filter_type, {})
 
         if sensor_name and sensor_name in self.filter_configs:
-            sensor_filter_config = self.filter_configs[sensor_name]
+            sensor_filter_config = self.filter_configs.get(sensor_name, {})
             filter_settings.update(sensor_filter_config)
+
+        #print(f"Applying {filter_type} filter for {sensor_name}: {filter_settings}")
 
         if filter_type == 'low_pass':
             alpha = filter_settings.get('alpha', 0.5)
@@ -209,98 +256,39 @@ class ADC_hat:
             R = filter_settings.get('R', 1e-2)
             P = filter_settings.get('P', 1.0)
             x0 = filter_settings.get('x0', data[0] if data else 0)
+
+            #print(f"Kalman filter settings for {sensor_name} -> Q: {Q}, R: {R}, P: {P}, x0: {x0}")
+
             return self._kalman_filter(data, Q, R, P, x0)
         else:
             print(f"Unknown filter type: {filter_type}. Returning raw data.")
             return data
 
-    def read_filtered(self, sensor_type, filter_type='low_pass', return_names=False):
-        """
-        Read, scale, and filter the sensor data.
-
-        :param sensor_type: Type of sensor data to read ('pressure' or 'angle').
-        :param filter_type: Type of filter to apply ('low_pass' or 'kalman').
-        :param return_names: Whether to return sensor names with values.
-        :return: List of filtered sensor values or tuples of (name, description, value).
-        """
-        if not self.initialized:
-            print("ADCPi not initialized!")
-            return None
-
-        scaled_data = self.read_scaled()
-
-        if sensor_type == 'pressure':
-            sensor_configs = self.pressure_sensor_configs
-            data_store = self.pressure_data
-        elif sensor_type == 'angle':
-            sensor_configs = self.angle_sensor_configs
-            data_store = self.angle_data
-        else:
-            print(f"Unknown sensor type: {sensor_type}.")
-            return None
-
-        if not sensor_configs:
-            print(f"No {sensor_type} sensors configured.")
-            return []
-
-        sensor_data = []
-        for sensor_name, sensor_config in sensor_configs.items():
-            scaled_value = scaled_data.get(sensor_name)
-
-            if scaled_value is None:
-                filtered_value = None
-            else:
-                if sensor_name not in data_store:
-                    data_store[sensor_name] = []
-                data_store[sensor_name].append(scaled_value)
-
-                filtered_value = self._apply_filter(data_store[sensor_name], filter_type, sensor_name)[-1]
-
-                # Update min and max calibrated values
-                if sensor_type == 'angle':
-                    if sensor_name not in self.min_calibrated_angle or filtered_value < self.min_calibrated_angle[sensor_name]:
-                        self.min_calibrated_angle[sensor_name] = filtered_value
-                    if sensor_name not in self.max_calibrated_angle or filtered_value > self.max_calibrated_angle[sensor_name]:
-                        self.max_calibrated_angle[sensor_name] = filtered_value
-                elif sensor_type == 'pressure':
-                    if sensor_name not in self.min_calibrated_pressure or filtered_value < self.min_calibrated_pressure[sensor_name]:
-                        self.min_calibrated_pressure[sensor_name] = filtered_value
-                    if sensor_name not in self.max_calibrated_pressure or filtered_value > self.max_calibrated_pressure[sensor_name]:
-                        self.max_calibrated_pressure[sensor_name] = filtered_value
-
-            if return_names:
-                sensor_data.append((sensor_name, sensor_config.get('name', ''), filtered_value))
-            else:
-                sensor_data.append(filtered_value)
-
-        return sensor_data
-
     def get_angle_range(self):
         """
-        Get the range of calibrated angles for each angle sensor.
+        Calculate and return the minimum and maximum observed angle for each sensor.
+        The range is computed as max - min.
         """
-        ranges = {}
-        for sensor_name in self.angle_sensor_configs.keys():
-            min_angle = self.min_calibrated_angle.get(sensor_name, None)
-            max_angle = self.max_calibrated_angle.get(sensor_name, None)
-            ranges[sensor_name] = (min_angle, max_angle)
-        return ranges
+        angle_ranges = {}
+
+        for sensor_name in self.angle_sensors.keys():
+            min_angle = self.min_angle.get(sensor_name)
+            max_angle = self.max_angle.get(sensor_name)
+            angle_ranges[sensor_name] = (min_angle, max_angle)
+        return angle_ranges
 
     def reset_angle_range(self):
         """
         Reset the range of calibrated angles.
         """
-        self.min_calibrated_angle = {}
-        self.max_calibrated_angle = {}
+        self.min_angle = {}
+        self.max_angle = {}
 
     def get_pressure_range(self):
-        """
-        Get the range of calibrated pressures for each pressure sensor.
-        """
         ranges = {}
-        for sensor_name in self.pressure_sensor_configs.keys():
-            min_pressure = self.min_calibrated_pressure.get(sensor_name, None)
-            max_pressure = self.max_calibrated_pressure.get(sensor_name, None)
+        for sensor_name in self.pressure_sensors.keys():
+            min_pressure = self.min_pressure.get(sensor_name)
+            max_pressure = self.max_pressure.get(sensor_name)
             ranges[sensor_name] = (min_pressure, max_pressure)
         return ranges
 
@@ -308,25 +296,23 @@ class ADC_hat:
         """
         Reset the range of calibrated pressures.
         """
-        self.min_calibrated_pressure = {}
-        self.max_calibrated_pressure = {}
+        self.min_pressure = {}
+        self.max_pressure = {}
 
     def list_sensors(self):
-        """
-        List all available and initialized sensors.
-        """
         if not self.initialized:
             print("ADCPi not initialized!")
             return
 
         print("Available Sensors:")
         print("Pressure Sensors:")
-        for sensor_name in self.pressure_sensor_configs.keys():
+        for sensor_name in self.pressure_sensors.keys():
             print(f"  {sensor_name}")
 
         print("Angle Sensors:")
-        for sensor_name in self.angle_sensor_configs.keys():
+        for sensor_name in self.angle_sensors.keys():
             print(f"  {sensor_name}")
+        print("-"*30)
 
     @staticmethod
     def _low_pass_filter(data, alpha):
@@ -427,6 +413,9 @@ class ADCPiStub:
         return mid_point + amplitude * math.sin(2 * math.pi * self.frequency * elapsed_time)
 
     def read_voltage(self, channel, create_sine=True, add_noise=True):
+
+        # TODO: Return same amount of values as there are sensors configured
+
         """
         Read simulated voltage value.
 

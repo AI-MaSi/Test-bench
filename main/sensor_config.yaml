@@ -25,7 +25,7 @@ ADC_CONFIG:
 
 
 FILTER_CONFIG:
-  default_filter: "kalman"
+  default_filter: "low_pass"
   # Specify the default filter to be used if not specified in individual sensors
   # Options: "low_pass", "kalman"
 
@@ -39,10 +39,13 @@ FILTER_CONFIG:
     # If the system is expected to have more dynamic behavior or the model is less accurate, increase Q.
     Q: 0.0001
 
+
+
     # Measurement noise covariance: This parameter represents the estimated variance of the measurement noise.
     # Decreasing this value increases the filter's reliance on the measurements rather than the model predictions.
     # If the measurements are more reliable, decrease R. If the measurements are noisy, increase R.
     R: 0.001
+
 
     # Error covariance: This parameter represents the initial estimate of the uncertainty in the state estimate.
     # A lower value means the filter starts with higher confidence in the initial estimate, leading to quicker adjustments.
@@ -55,7 +58,7 @@ FILTER_CONFIG:
     x0: 0.0  # Example: Initial guess of the state, adjust if there is prior information about the initial state
 
 
-  # Optional: Individual sensor-specific filter configurations can be added here if needed
+  # Optional: Individual sensor-specific filter configurations can be under the sensor if needed
   # For example:
   # sensor1:
   #   filter: "kalman"
@@ -75,29 +78,38 @@ RPM_SENSORS:
 
 
 ANGLE_SENSORS:
-  sensor1:
-    name: "LiftBoom angle"
-    input: [b1, 8]               # [Board number, Port number]
+  LiftBoom angle:
+    input: [b1, 8]                # [Board number, Port number]
     steps_per_revolution: 360     # Steps per revolution to improve accuracy
-    filter: "kalman"              # Optional: Override the default filter
+    #filter: "low_pass"           # Optional: low_pass override
+    #low_pass:
+    #    alpha: 0.6
+    filter: "kalman"              # Optional: kalman override
+    kalman:
+      Q: 0.0001
+      R: 0.001
+      P: 0.5
+      x0: 0.0
 
-  # Add more angle sensors as needed
+  #test sensor666:
+   # input: [b2, 3]               # [Board number, Port number]
+    #steps_per_revolution: 853000
+
+
 
 
 PRESSURE_SENSORS:
-  sensor1:
-    name: "Pump"                  # Name
+  Pump:
     input: [b1, 1]                # [Board number, Port number]
     calibration_value: 1.000      # Multiplier for calibrating measurements
-    filter: "low_pass"            # Optional: Override the default filter
+    # filter: "low_pass"            # Optional: Override the default filter
+    # alpha: 0.6                    # Optional: Alpha value for low-pass filter
 
-  sensor5:
-    name: "LiftBoom extension"
+  LiftBoom extension:
     input: [b1, 5]
     calibration_value: 1.000
 
-  sensor6:
-    name: "LiftBoom retraction"
+  LiftBoom retraction:
     input: [b1, 6]
     calibration_value: 1.000
 

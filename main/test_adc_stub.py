@@ -15,7 +15,7 @@ scaled_data = {}
 filtered_data = {}
 
 # Initialize data structures for each angle sensor
-for sensor_name in sensors.angle_sensor_configs.keys():
+for sensor_name in sensors.angle_sensors.keys():
     scaled_data[sensor_name] = []
     filtered_data[sensor_name] = []
 
@@ -32,14 +32,19 @@ while True:
     current_time = time.time() - start_time
     time_data.append(current_time)
 
-    # Read scaled data
+    # Read scaled data. Returns a dictionary with sensor names as keys. All the sensors!
     scaled_readings = sensors.read_scaled()
 
-    # Read filtered data for angle sensors
-    filtered_readings_angle = sensors.read_filtered('angle', return_names=True, filter_type='low_pass')
+    # Read scaled and filtered angle data
+    angle_readings = sensors.read_filtered('angle')
 
-    # Update data for each angle sensor
-    for sensor_name, _, value in filtered_readings_angle:
+    # test. Read everything
+    #angle_readings2 = sensors.read_filtered()
+    #print(f"Read everything filtered: {angle_readings2}")
+    #time.sleep(2)
+
+    # Update data for each angle sensor. If the sensor is not available, the value will be 0
+    for sensor_name, value in angle_readings.items():
         scaled_data[sensor_name].append(scaled_readings.get(sensor_name, 0))
         filtered_data[sensor_name].append(value)
 
@@ -47,8 +52,8 @@ while True:
     ax.clear()
 
     # Plot angle data
-    for sensor_name in sensors.angle_sensor_configs.keys():
-        ax.plot(time_data, scaled_data[sensor_name], label=f'Scaled {sensor_name}', linestyle='--')
+    for sensor_name in sensors.angle_sensors.keys():
+        ax.plot(time_data, scaled_data[sensor_name], label=f'Scaled (raw) {sensor_name}', linestyle='--')
         ax.plot(time_data, filtered_data[sensor_name], label=f'Filtered {sensor_name}')
 
     ax.set_xlabel('Time (seconds)')

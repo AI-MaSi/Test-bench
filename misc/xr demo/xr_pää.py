@@ -1,9 +1,15 @@
+# Simuloitu XR keissi
+
+
 import requests
 import time
 import random
 
+from main.xr_demo import SERVER_URL
+
 NUM_SEND = 8
-SERVER_URL = 'http://192.168.0.131:8000'
+# SERVER_URL = 'http://192.168.0.131:8000'
+SERVER_URL = 'http://localhost:8000'
 
 
 def send_values(data):

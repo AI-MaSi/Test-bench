@@ -1,4 +1,5 @@
-# this file is used to find the center position of the valves, and measure the dead area
+# This file is used to find the center position of the valves, measure the dead area,
+# and display various sensor readings in real-time.
 
 import pygame
 from PWM_controller import PWM_hat
@@ -6,29 +7,37 @@ import yaml
 from time import sleep
 from ADC_sensors import ADC_hat
 
+# Configuration file path
 CONFIG_FILE = 'test_bench_config.yaml'
 
-step = 0.005
-min_cap = -1.0
-max_cap = 1.0
-servo_step = 0.01  # Step for servo input
+# Control parameters
+step = 0.005  # Step size for pump control
+min_cap = -1.0  # Minimum cap for pump and servo values
+max_cap = 1.0  # Maximum cap for pump and servo values
+servo_step = 0.01  # Step size for servo input
 
-values = [] # Pump and servo values
-pressure_readings = []
+# Lists to store values and readings
+values = []  # Pump and servo values
+pressure_readings = []  # Pressure sensor readings
 
-
-# Load configuration
+# Load configuration from YAML file
 with open(CONFIG_FILE, 'r') as file:
     config = yaml.safe_load(file)
     initial_value = config['CHANNEL_CONFIGS']['pump'].get('idle', min_cap)  # Default to min_cap if not specified
-    servo_angle_limit = config['CHANNEL_CONFIGS']['test_servo'].get('multiplier_positive', 30)   # Default to +-30 degrees if not specified
+    servo_angle_limit = config['CHANNEL_CONFIGS']['test_servo'].get('multiplier_positive',
+                                                                    30)  # Default to ±30 degrees if not specified
 
 # Initialize the pump driver
-pwm_driver = PWM_hat(deadzone=0, simulation_mode=False, inputs=2, input_rate_threshold=1,
-                                             config_file='test_bench_config.yaml')
+pwm_driver = PWM_hat(simulation_mode=True,
+                     deadzone=0,
+                     inputs=2,
+                     input_rate_threshold=0,
+                     config_file='test_bench_config.yaml')
 
 # Initialize the pressure sensors
-adc_sensors = ADC_hat(config_file='sensor_config.yaml')
+adc_sensors = ADC_hat(simulation_mode=True,
+                      config_file='sensor_config.yaml')
+
 
 # Function to stop the ESC beep if first start
 def reset_pwm():
@@ -36,9 +45,10 @@ def reset_pwm():
     pwm_driver.update_values(values, min_cap=min_cap)
     print(f"Sent reset command to pump ({values})")
 
+
 reset_pwm()
 
-# show user the used input mappings
+# Show user the used input mappings
 pwm_driver.print_input_mappings()
 
 sleep(5)
@@ -47,7 +57,7 @@ sleep(5)
 pygame.init()
 
 # Set up display
-width, height = 800, 600
+width, height = 800, 700  # Increased height to accommodate new information
 window = pygame.display.set_mode((width, height))
 pygame.display.set_caption('Pump and Servo Control')
 
@@ -61,7 +71,6 @@ last_pump_value = pump_value
 servo_input = 0.0  # Starting servo input (centered)
 clock = pygame.time.Clock()
 pump_stopped = False
-
 
 # Main loop
 running = True
@@ -99,62 +108,97 @@ while running:
                 servo_input = 0.0  # Reset servo input to center
                 print("Configuration updated")
 
-
     # Update pump driver and servo input
     values = [pump_value, servo_input]
 
-    # wow if you now ask nicely the driver will return the servo angles:)
+    # Get servo angles from the driver
     servo_angles = pwm_driver.update_values(values, min_cap=min_cap, return_servo_angles=True)
 
-    # Read pressure sensors
-    pressure_readings = adc_sensors.read_pressure(alpha=1.0, return_names=True)
-    # output will be: sensor_idx_name, sensor_config_name, value
-    angle_readings = adc_sensors.read_angle(alpha=1.0)
+    # Read sensors (scaled and filtered)
+    pressure_readings = adc_sensors.read_scaled()
+    filtered_pressure_readings = adc_sensors.read_filtered(read="pressure")
+    angle_readings = adc_sensors.read_scaled()
+    filtered_angle_readings = adc_sensors.read_filtered(read="angle")
 
+    # Get angle ranges
+    angle_ranges = adc_sensors.get_angle_range()
+
+    # Clear the window
     window.fill((0, 0, 0))
 
+    # Render main control values
     pump_text = font.render(f'Pump Value: {pump_value:.3f}', True, (255, 255, 255))
     servo_text = font.render(f'Servo Input: {servo_input:.3f}', True, (255, 255, 255))
     valve_text = font.render(f'Valve Angle: {servo_angles[0]:.1f}°', True, (255, 255, 255))
-    boomAngle_text = font.render(f'Boom Angle: {angle_readings[0][1]:.1f}°', True, (255, 255, 255))
+    boomAngle_text = font.render(f'Boom Angle: {angle_readings["LiftBoom angle"]:.1f}°', True, (255, 255, 255))
 
-    instructions_text1 = small_font.render("L/R arrows: Adjust pump", True, (255, 255, 255))
-    instructions_text2 = small_font.render("U/D arrows: Adjust servo", True, (255, 255, 255))
-    instructions_text3 = small_font.render("SPACE: Stop/Resume pump", True, (255, 255, 255))
-    instructions_text4 = small_font.render("U key: Update configuration", True, (255, 255, 255))
-
-    # Render values
     window.blit(pump_text, (50, 50))
     window.blit(servo_text, (50, 100))
     window.blit(valve_text, (50, 150))
     window.blit(boomAngle_text, (275, 150))
 
     # Render instructions
-    window.blit(instructions_text1, (50, 200))
-    window.blit(instructions_text2, (50, 225))
-    window.blit(instructions_text3, (50, 250))
-    window.blit(instructions_text4, (50, 275))
+    instructions = [
+        "L/R arrows: Adjust pump",
+        "U/D arrows: Adjust servo",
+        "SPACE: Stop/Resume pump",
+        "U key: Update configuration"
+    ]
+    for i, instruction in enumerate(instructions):
+        text = small_font.render(instruction, True, (255, 255, 255))
+        window.blit(text, (50, 200 + i * 25))
 
     # Render pressure readings
-    pressure_box = pygame.Rect(50, 325, 300, 150)
+    pressure_box = pygame.Rect(50, 325, 400, 200)
     pygame.draw.rect(window, (100, 100, 100), pressure_box)
     pressure_title = font.render("Pressure Readings", True, (255, 255, 255))
     window.blit(pressure_title, (60, 335))
 
     y_offset = 375
-    for sensor_id, sensor_name, pressure in pressure_readings:
-        # includes psi to bar conversion
-        if pressure is not None:
-            pressure_text = small_font.render(f"{sensor_name}: {(pressure * 0.06894757):.2f} bar", True,
-                                              (255, 255, 255))
-        else:
-            pressure_text = small_font.render(f"{sensor_name}: N/A", True, (255, 255, 255))
+    for sensor_name, pressure in pressure_readings.items():
+        pressure_text = small_font.render(f"{sensor_name}: {pressure:.2f} (scaled)", True, (255, 255, 255))
         window.blit(pressure_text, (60, y_offset))
+        y_offset += 25
+
+        filtered_pressure = filtered_pressure_readings.get(sensor_name)
+        if filtered_pressure is not None:
+            filtered_text = small_font.render(f"  Filtered: {filtered_pressure:.2f}", True, (200, 200, 200))
+            window.blit(filtered_text, (60, y_offset))
         y_offset += 30
 
+    # Render angle readings
+    angle_box = pygame.Rect(460, 325, 300, 200)
+    pygame.draw.rect(window, (100, 100, 100), angle_box)
+    angle_title = font.render("Angle Readings", True, (255, 255, 255))
+    window.blit(angle_title, (470, 335))
+
+    y_offset = 375
+    for sensor_name, angle in angle_readings.items():
+        if 'angle' in sensor_name.lower():
+            angle_text = small_font.render(f"{sensor_name}: {angle:.2f}° (scaled)", True, (255, 255, 255))
+            window.blit(angle_text, (470, y_offset))
+            y_offset += 25
+
+            filtered_angle = filtered_angle_readings.get(sensor_name)
+            if filtered_angle is not None:
+                filtered_text = small_font.render(f"  Filtered: {filtered_angle:.2f}°", True, (200, 200, 200))
+                window.blit(filtered_text, (470, y_offset))
+            y_offset += 30
+
+    # Render angle ranges
+    range_box = pygame.Rect(50, 535, 710, 50)
+    pygame.draw.rect(window, (100, 100, 100), range_box)
+    range_title = font.render("Angle Ranges", True, (255, 255, 255))
+    window.blit(range_title, (60, 545))
+
+    range_text = small_font.render(f"{angle_ranges}", True, (255, 255, 255))
+    window.blit(range_text, (60, 575))
+
+    # Update the display
     pygame.display.flip()
 
     # Cap the frame rate
-    clock.tick(15) # 15 SPS max for 16-bit ADC
+    clock.tick(15)  # 15 FPS max for 16-bit ADC
 
+# Quit pygame when the loop ends
 pygame.quit()

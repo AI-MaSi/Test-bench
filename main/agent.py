@@ -6,7 +6,7 @@ For interactive mode: python3 agent.py --mode interactive
 """
 
 import requests
-import json
+#import json
 import threading
 import torch
 import torch.nn.functional as F
@@ -19,6 +19,7 @@ import csv
 import sys
 import select
 from collections import deque
+
 from model import Linear_QNet, QTrainer
 import matplotlib.pyplot as plt
 
@@ -195,6 +196,14 @@ class TestBenchEnv:
             raise ValueError("Min and max angles must be set before generating a random angle")
         return random.uniform((self.min_angle+15), (self.max_angle-15))
 
+    def get_values_from_server(self):
+        # TODO: use XRCommunicator to get values
+        pass
+
+    def send_values_to_server(self):
+        # TODO: use XRCommunicator to send values
+        pass
+
     def reset(self):
         self.target_angle = self.generate_random_angle()
         self.time_at_target = 0
@@ -259,11 +268,13 @@ class TestBenchEnv:
         return self.state, reward, done
 
     def update_state(self):
-        # Read the current angle from the sensor
-        self.current_angle = self.adc.read_angle()[0][1]
+        # Read the LiftBoom angle
+        angles = self.adc.read_filtered(read="angle")
+        self.current_angle = angles["LiftBoom angle"]
 
         # Read the current pump pressure
-        self.current_pressure = self.adc.read_pressure()[0]
+        pressures = self.adc.read_filtered(read="pressure")
+        self.current_pressure = pressures["Pump"]
 
         # Calculate the current distance to the target angle
         current_distance = self.current_angle - self.target_angle
@@ -396,28 +407,29 @@ class Agent:
 
 def initialize_adc():
     adc_config_file = 'sensor_config.yaml'
-    return ADC_hat(config_file=adc_config_file)
+    return ADC_hat(config_file=adc_config_file, simulation_mode=True)
 
 def initialize_pwm():
     pwm_config_file = 'test_bench_config_RL.yaml'
-    return PWM_hat(deadzone=0, simulation_mode=False, inputs=2, input_rate_threshold=0, config_file=pwm_config_file)
+    return PWM_hat(deadzone=0, simulation_mode=True, inputs=2, input_rate_threshold=0, config_file=pwm_config_file)
 
 def calibrate_arm(sensor, pwm_driver):
     print("Starting calibration...")
+    sensor.reset_angle_range()
 
     # Drive boom up
     pwm_driver.update_values([0.070, 1])
     time.sleep(1)  # Wait a bit to let pressure stabilize
 
     while True:
-        pressures = sensor.read_pressure()
-        angles = sensor.read_angle()
-        current_angle = angles[0][1]
+
+        current_angle, current_pressure = read_sensors(sensor)
+
 
         print(
-            f"[UP] Pressure: {pressures[0]:.1f}, Current angle: {current_angle:.2f}")
+            f"[UP] Pressure: {current_pressure:.1f}, Current angle: {current_angle:.2f}")
 
-        if pressures[0] >= 200:
+        if current_pressure >= 200:
             pwm_driver.update_values([0.070, 0])  # Stop
             break
         time.sleep(0.1)
@@ -427,28 +439,30 @@ def calibrate_arm(sensor, pwm_driver):
     time.sleep(1) # Wait a bit to let pressure stabilize
 
     while True:
-        pressures = sensor.read_pressure()
-        angles = sensor.read_angle()
-        current_angle = angles[0][1]
-        ranges = sensor.get_range()
+        current_angle, current_pressure = read_sensors(sensor)
 
         print(
-            f"[DOWN] Pressure: {pressures[0]:.1f}, Current angle: {current_angle:.2f}")
+            f"[DOWN] Pressure: {current_pressure:.1f}, Current angle: {current_angle:.2f}")
 
-        if pressures[0] >= 200:
+        if current_pressure >= 200:
             pwm_driver.update_values([0.070, 0])  # Stop
             break
         time.sleep(0.1)
 
     # Move to midpoint
-    ranges = sensor.get_range()
-    min_angle, max_angle = ranges[list(ranges.keys())[0]]
+    ranges = sensor.get_angle_range()
+
+
+    min_angle, max_angle = ranges["LiftBoom angle"]
+
+    print(f"liftboom angles: {min_angle}, {max_angle}")
+
     mid_angle = (min_angle + (max_angle - min_angle) * 0.5)
 
     print(f"Moving to mid point: {mid_angle}")
 
     while True:
-        current_angle = sensor.read_angle()[0][1]
+        current_angle, current_pressure = read_sensors(sensor)
 
         if abs(current_angle - mid_angle) < 1:  # 1 degree tolerance
             pwm_driver.update_values([-1.0, 0.0])  # Stop
@@ -465,6 +479,19 @@ def calibrate_arm(sensor, pwm_driver):
         time.sleep(0.1)
 
     return min_angle, max_angle
+
+def read_sensors(sensor):
+    # simple read function for testing purposes
+
+    # Read the LiftBoom angle
+    angles = sensor.read_filtered(read="angle")
+    current_angle = angles["LiftBoom angle"]
+
+    # Read the current pump pressure
+    pressures = sensor.read_filtered(read="pressure")
+    current_pressure = pressures["Pump"]
+
+    return current_angle, current_pressure
 
 def train(env, agent, debug=True):
     # Set debug mode for the environment
@@ -657,7 +684,7 @@ def interactive_mode(env, agent, pid_controller):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run RL agent or PID controller')
-    parser.add_argument('--mode', choices=['train', 'rl', 'pid', 'interactive'], default='train',
+    parser.add_argument('--mode', choices=['train', 'rl', 'pid', 'interactive', 'xr'], default='train',
                         help='Mode to run the script in')
     parser.add_argument('--checkpoint', type=str, help='Path to the checkpoint file to load')
     args = parser.parse_args()
@@ -667,6 +694,10 @@ if __name__ == '__main__':
     pwm_driver = initialize_pwm()
 
     min_angle, max_angle = calibrate_arm(sensor, pwm_driver)
+
+    # for testing
+    #min_angle = 0
+    #max_angle = 90
 
     # Initialize the environment with the sensor and pwm_driver
     env = TestBenchEnv(sensor, pwm_driver, max_angle, min_angle)
