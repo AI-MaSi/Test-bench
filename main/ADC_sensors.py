@@ -2,14 +2,17 @@ import yaml
 import math
 import time
 import random
+from typing import Dict, Tuple, Optional, List
 
 try:
     from ADCPi import ADCPi
 except ImportError:
     print("ADCPi module not found. Running in simulation mode.")
 
+
 class ADC_hat:
-    def __init__(self, config_file, decimals=2, simulation_mode=False, min_sim_voltage=0.5, max_sim_voltage=4.5, frequency=1.0):
+    def __init__(self, config_file: str, decimals: int = 2, simulation_mode: bool = False,
+                 min_sim_voltage: float = 0.5, max_sim_voltage: float = 4.5, frequency: float = 1.0):
         """
         Initialize ADC_hat with configuration from a YAML file.
 
@@ -24,51 +27,45 @@ class ADC_hat:
         self.simulation_mode = simulation_mode
 
         if simulation_mode:
-            # Replace ADCPi with a stub for simulation
             global ADCPi
-            ADCPi = lambda addr1, addr2, bit_rate: ADCPiStub(addr1, addr2, bit_rate, min_sim_voltage, max_sim_voltage, frequency)
+            ADCPi = lambda addr1, addr2, bit_rate: ADCPiStub(addr1, addr2, bit_rate, min_sim_voltage, max_sim_voltage,
+                                                             frequency)
             print("Running in simulation mode.")
 
-        # Load configuration from YAML file
-        with open(config_file, 'r') as file:
-            configs = yaml.safe_load(file)
-            self.pressure_sensors = configs.get('PRESSURE_SENSORS', {})
-            self.angle_sensors = configs.get('ANGLE_SENSORS', {})
-            self.i2c_addresses = configs['ADC_CONFIG']['i2c_addresses']
-            self.pga_gain = configs['ADC_CONFIG']['pga_gain']
-            self.bit_rate = configs['ADC_CONFIG']['bit_rate']
-            self.conversion_mode = configs['ADC_CONFIG']['conversion_mode']
-            self.filter_configs = configs.get('FILTER_CONFIG', {})
-
-        # Initialize ADC objects and data storage
-        self.adcs = {}
+        self._load_config(config_file)
+        self.adcs: Dict[str, ADCPi] = {}
         self.initialized = False
-        self.min_voltage = {}
-        self.pressure_data = {}
-        self.angle_data = {}
-        self.calibrated_angle_data = {}
-        self.min_angle = {}
-        self.max_angle = {}
-        self.min_pressure = {}
-        self.max_pressure = {}
+        self.min_voltage: Dict[str, float] = {}
+        self.min_angle: Dict[str, float] = {}
+        self.max_angle: Dict[str, float] = {}
+        self.min_pressure: Dict[str, float] = {}
+        self.max_pressure: Dict[str, float] = {}
 
         self.initialize_adc()
 
+    def _load_config(self, config_file: str):
+        """Load configuration from YAML file."""
+        try:
+            with open(config_file, 'r') as file:
+                configs = yaml.safe_load(file)
+                self.pressure_sensors = configs.get('PRESSURE_SENSORS', {})
+                self.angle_sensors = configs.get('ANGLE_SENSORS', {})
+                self.i2c_addresses = configs['ADC_CONFIG']['i2c_addresses']
+                self.pga_gain = configs['ADC_CONFIG']['pga_gain']
+                self.bit_rate = configs['ADC_CONFIG']['bit_rate']
+                self.conversion_mode = configs['ADC_CONFIG']['conversion_mode']
+                self.filter_configs = configs.get('FILTER_CONFIG', {})
+        except (yaml.YAMLError, KeyError) as e:
+            raise ValueError(f"Error parsing configuration file: {e}")
+
     def initialize_adc(self):
+        """Initialize ADC boards based on sensor configurations."""
         board_needs_initialization = {board_name: False for board_name in self.i2c_addresses.keys()}
 
-        # Determine which boards need initialization
-        for sensor_config in self.pressure_sensors.values():
+        for sensor_config in {**self.pressure_sensors, **self.angle_sensors}.values():
             board_name = sensor_config['input'][0]
             if board_name in board_needs_initialization:
                 board_needs_initialization[board_name] = True
-
-        for sensor_config in self.angle_sensors.values():
-            board_name = sensor_config['input'][0]
-            if board_name in board_needs_initialization:
-                board_needs_initialization[board_name] = True
-
-        print(f"Boards needed to init: {board_needs_initialization}")
 
         for board_name, need_init in board_needs_initialization.items():
             if need_init:
@@ -79,16 +76,13 @@ class ADC_hat:
                     adc_instance.set_pga(self.pga_gain)
                     self.adcs[board_name] = adc_instance
                     print(f"Initialized {board_name} with addresses {hex(addr1)}, {hex(addr2)}")
-                    print(f"PGA Gain: {self.pga_gain}, Bit Rate: {self.bit_rate} bits, Conversion Mode: {self.conversion_mode}")
                 except OSError as e:
                     raise OSError(f"Failed to initialize ADCPi for {board_name}! Error: {e}")
 
         self.initialized = True
 
-    def read_raw(self):
-        """
-        Read raw voltage from all sensors as specified in the configuration.
-        """
+    def read_raw(self) -> Dict[str, float]:
+        """Read raw voltage from all sensors as specified in the configuration."""
         if not self.initialized:
             print("ADCPi not initialized!")
             return {}
@@ -101,28 +95,18 @@ class ADC_hat:
 
         return raw_readings
 
-    def _update_sensor_range(self, sensor_type, sensor_name, value):
-        """
-        Update the minimum and maximum range for a sensor.
-
-        :param sensor_type: 'pressure' or 'angle' indicating the type of sensor.
-        :param sensor_name: Name of the sensor to update.
-        :param value: The current value to compare.
-        """
-        if sensor_type == 'pressure':
-            min_dict, max_dict = self.min_pressure, self.max_pressure
-        elif sensor_type == 'angle':
-            min_dict, max_dict = self.min_angle, self.max_angle
+    def _read_raw(self, sensor_config: Dict) -> Optional[float]:
+        """Read raw voltage based on the sensor configuration."""
+        board_name = sensor_config['input'][0]
+        channel = sensor_config['input'][1]
+        adc_instance = self.adcs.get(board_name)
+        if adc_instance:
+            return adc_instance.read_voltage(channel)
         else:
-            print(f"Unknown sensor type: {sensor_type}")
-            return
+            print(f"ADC instance for board {board_name} not found.")
+            return None
 
-        if sensor_name not in min_dict or value < min_dict[sensor_name]:
-            min_dict[sensor_name] = value
-        if sensor_name not in max_dict or value > max_dict[sensor_name]:
-            max_dict[sensor_name] = value
-
-    def read_scaled(self, read=None):
+    def read_scaled(self, read: Optional[str] = None) -> Dict[str, float]:
         """
         Read and scale the sensor data.
 
@@ -137,7 +121,6 @@ class ADC_hat:
                 if voltage is not None:
                     scaled_value = self.calibrate_pressure(voltage, sensor_config)
                     scaled_readings[sensor_name] = scaled_value
-                    # Update pressure range
                     self._update_sensor_range('pressure', sensor_name, scaled_value)
 
         if read is None or read == 'angle':
@@ -146,107 +129,73 @@ class ADC_hat:
                 if voltage is not None:
                     scaled_value = self.calibrate_angle(voltage, sensor_config)
                     scaled_readings[sensor_name] = scaled_value
-                    # Update angle range
                     self._update_sensor_range('angle', sensor_name, scaled_value)
 
         return scaled_readings
 
-    def read_filtered(self, read=None):
-        # Step 1: Read and scale the sensor data
+    def read_filtered(self, read: Optional[str] = None) -> Dict[str, float]:
+        """Read, scale, and filter sensor data."""
         scaled_data = self.read_scaled(read)
-        #print(f"Scaled data: {scaled_data}")
-
-        # Step 2: Apply filtering to the scaled data
         filtered_data = {}
+
         for sensor_name, scaled_value in scaled_data.items():
             sensor_config = self.pressure_sensors.get(sensor_name) or self.angle_sensors.get(sensor_name)
-            if sensor_config:
-                # Apply the sensor-specific filter
-                sensor_filter_type = sensor_config.get('filter', self.filter_configs.get('default_filter', 'kalman'))
-                filtered_value = self._apply_filter([scaled_value], sensor_filter_type, sensor_name)[
-                    0]  # Extract the filtered value
+            if not sensor_config:
+                continue
 
-                # Determine whether this is an angle or pressure sensor
-                if sensor_name in self.angle_sensors:
-                    min_angle = self.min_angle.get(sensor_name)
-                    max_angle = self.max_angle.get(sensor_name)
+            sensor_filter_type = sensor_config.get('filter', self.filter_configs.get('default_filter', 'kalman'))
+            filtered_value = self._apply_filter([scaled_value], sensor_filter_type, sensor_name)[0]
 
-                    if max_angle > min_angle:
-                        adjusted_value = (filtered_value - min_angle) / (max_angle - min_angle) * (
-                                    max_angle - min_angle)
-                    else:
-                        adjusted_value = filtered_value
+            if sensor_name in self.angle_sensors:
+                min_angle = self.min_angle.get(sensor_name)
+                max_angle = self.max_angle.get(sensor_name)
 
-                    # Update the angle range with the adjusted value
-                    self._update_sensor_range('angle', sensor_name, adjusted_value)
-                    filtered_data[sensor_name] = adjusted_value
-                    #print(f"Updated angle data for {sensor_name}: {adjusted_value}")
+                if min_angle is not None and max_angle is not None:
+                    adjusted_value = filtered_value - min_angle
                 else:
-                    # For pressure sensors, just use the filtered value
-                    filtered_data[sensor_name] = filtered_value
-                    #print(f"Updated pressure data for {sensor_name}: {filtered_value}")
+                    adjusted_value = filtered_value
 
-        #print(f"Filtered data: {filtered_data}")
+                filtered_data[sensor_name] = round(adjusted_value, self.decimals)
+            else:
+                filtered_data[sensor_name] = filtered_value
+
         return filtered_data
 
-    def _read_raw(self, sensor_config):
-        """
-        Read raw voltage based on the sensor configuration.
-
-        :param sensor_config: Configuration dictionary for the sensor.
-        :return: Raw voltage reading.
-        """
-        board_name = sensor_config['input'][0]
-        channel = sensor_config['input'][1]
-        adc_instance = self.adcs.get(board_name)
-        if adc_instance:
-            return adc_instance.read_voltage(channel)
-        else:
-            print(f"ADC instance for board {board_name} not found.")
-            return None
-
-    def calibrate_pressure(self, voltage, sensor_config):
-        """
-        Calibrate pressure value based on the voltage.
-
-        :param voltage: Raw voltage reading.
-        :param sensor_config: Configuration dictionary for the sensor.
-        :return: Calibrated pressure value.
-        """
+    def calibrate_pressure(self, voltage: float, sensor_config: Dict) -> float:
+        """Calibrate pressure value based on the voltage."""
         if voltage > 0.40:
             return round((1000 * (voltage - 0.5) / (4.5 - 0.5)) * sensor_config['calibration_value'], self.decimals)
         else:
             return 0
 
-    def calibrate_angle(self, voltage, sensor_config):
-        """
-        Calibrate angle value based on the voltage.
-
-        :param voltage: Raw voltage reading.
-        :param sensor_config: Configuration dictionary for the sensor.
-        :return: Calibrated angle value.
-        """
+    def calibrate_angle(self, voltage: float, sensor_config: Dict) -> float:
+        """Calibrate angle value based on the voltage."""
         steps_per_revolution = sensor_config.get('steps_per_revolution', 360)
         angle = round((voltage - 0.5) * steps_per_revolution / (4.5 - 0.5), self.decimals)
-
         return angle
 
-    def _apply_filter(self, data, filter_type, sensor_name=None):
-        """
-        Apply the specified filter to the data.
+    def _update_sensor_range(self, sensor_type: str, sensor_name: str, value: float):
+        """Update the minimum and maximum range for a sensor."""
+        if sensor_type == 'pressure':
+            min_dict, max_dict = self.min_pressure, self.max_pressure
+        elif sensor_type == 'angle':
+            min_dict, max_dict = self.min_angle, self.max_angle
+        else:
+            print(f"Unknown sensor type: {sensor_type}")
+            return
 
-        :param data: List of data values to filter.
-        :param filter_type: Type of filter to apply ('low_pass' or 'kalman').
-        :param sensor_name: Name of the sensor for sensor-specific filter settings.
-        :return: Filtered data.
-        """
+        if sensor_name not in min_dict or value < min_dict[sensor_name]:
+            min_dict[sensor_name] = value
+        if sensor_name not in max_dict or value > max_dict[sensor_name]:
+            max_dict[sensor_name] = value
+
+    def _apply_filter(self, data: List[float], filter_type: str, sensor_name: Optional[str] = None) -> List[float]:
+        """Apply the specified filter to the data."""
         filter_settings = self.filter_configs.get(filter_type, {})
 
         if sensor_name and sensor_name in self.filter_configs:
             sensor_filter_config = self.filter_configs.get(sensor_name, {})
             filter_settings.update(sensor_filter_config)
-
-        #print(f"Applying {filter_type} filter for {sensor_name}: {filter_settings}")
 
         if filter_type == 'low_pass':
             alpha = filter_settings.get('alpha', 0.5)
@@ -256,35 +205,55 @@ class ADC_hat:
             R = filter_settings.get('R', 1e-2)
             P = filter_settings.get('P', 1.0)
             x0 = filter_settings.get('x0', data[0] if data else 0)
-
-            #print(f"Kalman filter settings for {sensor_name} -> Q: {Q}, R: {R}, P: {P}, x0: {x0}")
-
             return self._kalman_filter(data, Q, R, P, x0)
         else:
             print(f"Unknown filter type: {filter_type}. Returning raw data.")
             return data
 
-    def get_angle_range(self):
-        """
-        Calculate and return the minimum and maximum observed angle for each sensor.
-        The range is computed as max - min.
-        """
-        angle_ranges = {}
+    @staticmethod
+    def _low_pass_filter(data: List[float], alpha: float) -> List[float]:
+        """Apply a low-pass filter to the data."""
+        filtered_data = []
+        prev_value = data[0] if data else 0
+        for value in data:
+            filtered_value = alpha * prev_value + (1 - alpha) * value
+            filtered_data.append(filtered_value)
+            prev_value = filtered_value
+        return filtered_data
 
+    @staticmethod
+    def _kalman_filter(data: List[float], Q: float, R: float, P: float, x0: float) -> List[float]:
+        """Apply a Kalman filter to the data."""
+        x = x0
+        filtered_data = []
+        for z in data:
+            P = P + Q
+            K = P / (P + R)
+            x = x + K * (z - x)
+            P = (1 - K) * P
+            filtered_data.append(x)
+        return filtered_data
+
+    def get_angle_range(self) -> Dict[str, Tuple[float, float]]:
+        """Calculate and return the calibrated angle range for each sensor."""
+        angle_ranges = {}
         for sensor_name in self.angle_sensors.keys():
             min_angle = self.min_angle.get(sensor_name)
             max_angle = self.max_angle.get(sensor_name)
-            angle_ranges[sensor_name] = (min_angle, max_angle)
+            if min_angle is not None and max_angle is not None:
+                angle_range = max_angle - min_angle
+                angle_ranges[sensor_name] = (0, round(angle_range, self.decimals))
+            else:
+                angle_ranges[sensor_name] = (None, None)
         return angle_ranges
 
     def reset_angle_range(self):
-        """
-        Reset the range of calibrated angles.
-        """
+        """Reset the range of calibrated angles."""
         self.min_angle = {}
         self.max_angle = {}
 
-    def get_pressure_range(self):
+    def get_pressure_range(self) -> Dict[str, Tuple[float, float]]:
+        """Get the range of observed pressures for each sensor."""
         ranges = {}
         for sensor_name in self.pressure_sensors.keys():
             min_pressure = self.min_pressure.get(sensor_name)
@@ -293,13 +262,12 @@ class ADC_hat:
         return ranges
 
     def reset_pressure_range(self):
-        """
-        Reset the range of calibrated pressures.
-        """
+        """Reset the range of calibrated pressures."""
         self.min_pressure = {}
         self.max_pressure = {}
 
     def list_sensors(self):
+        """List all available sensors."""
         if not self.initialized:
             print("ADCPi not initialized!")
             return
@@ -312,46 +280,7 @@ class ADC_hat:
         print("Angle Sensors:")
         for sensor_name in self.angle_sensors.keys():
             print(f"  {sensor_name}")
-        print("-"*30)
-
-    @staticmethod
-    def _low_pass_filter(data, alpha):
-        """
-        Apply a low-pass filter to the data.
-
-        :param data: List of data values to filter.
-        :param alpha: Smoothing factor for the filter.
-        :return: Filtered data.
-        """
-        filtered_data = []
-        prev_value = data[0] if data else 0
-        for value in data:
-            filtered_value = alpha * prev_value + (1 - alpha) * value
-            filtered_data.append(filtered_value)
-            prev_value = filtered_value
-        return filtered_data
-
-    @staticmethod
-    def _kalman_filter(data, Q, R, P, x0):
-        """
-        Apply a Kalman filter to the data.
-
-        :param data: List of data values to filter.
-        :param Q: Process noise covariance.
-        :param R: Measurement noise covariance.
-        :param P: Estimate covariance.
-        :param x0: Initial estimate.
-        :return: Filtered data.
-        """
-        x = x0
-        filtered_data = []
-        for z in data:
-            P = P + Q
-            K = P / (P + R)
-            x = x + K * (z - x)
-            P = (1 - K) * P
-            filtered_data.append(x)
-        return filtered_data
+        print("-" * 30)
 
 
 class ADCPiStub:

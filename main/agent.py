@@ -54,8 +54,8 @@ class XRCommunicator:
             'pump_control_value': 0,
             'servo_angle': 0,
             'boom_angle': 0,
-            'button': None,
-            'slider': 45  # Default to midpoint
+            'control_mode': 'PID',  # 'PID' or 'RL'
+            'target_angle': 45  # Default to midpoint
         }
         self.lock = threading.Lock()
         self.running = True
@@ -77,9 +77,7 @@ class XRCommunicator:
                 self.update_local_data()
                 data = {'values': list(self.latest_data.values())}
                 response = requests.post(f'{self.server_url}/send_data/client2', json=data, timeout=1)
-                if response.status_code == 200:
-                    print(f"Sent: {data}")
-                else:
+                if response.status_code != 200:
                     print(f"Failed to send data. Status code: {response.status_code}")
             except requests.exceptions.RequestException as e:
                 print(f"Send request failed: {e}")
@@ -92,7 +90,6 @@ class XRCommunicator:
                 if response.status_code == 200:
                     received_data = response.json()
                     self.update_received_data(received_data)
-                    print(f"Received: {received_data}")
                 else:
                     print(f"Failed to receive data. Status code: {response.status_code}")
             except requests.exceptions.RequestException as e:
@@ -111,10 +108,10 @@ class XRCommunicator:
 
     def update_received_data(self, received_data):
         with self.lock:
-            if 'button' in received_data:
-                self.latest_data['button'] = received_data['button']
-            if 'slider' in received_data:
-                self.latest_data['slider'] = received_data['slider']
+            if 'control_mode' in received_data:
+                self.latest_data['control_mode'] = received_data['control_mode']
+            if 'target_angle' in received_data:
+                self.latest_data['target_angle'] = received_data['target_angle']
 
     def get_latest_data(self):
         with self.lock:
@@ -260,10 +257,13 @@ class TestBenchEnv:
         if self.debug_mode:
             self.debug_print(reward, action)
 
-        # Update previous distance, action, and angle for the next step
-        self.previous_distance = current_distance
-        self.previous_action = action
-        self.previous_angle = self.current_angle
+
+        # Update the state with the current pressure
+        self.state = np.array([
+            self.current_angle / self.max_angle,
+            current_distance / self.max_angle,
+            self.current_pressure / self.max_pressure
+        ])
 
         return self.state, reward, done
 
@@ -682,10 +682,45 @@ def interactive_mode(env, agent, pid_controller):
             elif user_input == 'p':
                 current_mode = "PID"
 
+def run_demo(env, agent, pid_controller):
+    communicator = XRCommunicator(env)
+    communicator.start()
+
+    try:
+        while True:
+            data = communicator.get_latest_data()
+
+            # Update target angle based on received data
+            env.target_angle = data['target_angle']
+
+            # Choose between RL and PID based on control mode
+            if data['control_mode'] == 'RL':
+                state = env.update_state()
+                action = agent.get_action(state)
+            else:
+                current_angle = env.current_angle
+                pid_controller.SetPoint = env.target_angle
+                pid_controller.update(current_angle)
+                action = pid_controller.output
+                action = max(-1, min(1, action))  # Clamp to [-1, 1]
+                action = -action  # Flip output
+
+            # Apply the action
+            next_state, reward, done = env.step(action)
+
+            # Update the pump control value in the data
+            data['pump_control_value'] = env.pwm.values[0]
+
+            time.sleep(1 / LOOP_HZ)  # Maintain the loop frequency
+
+    except KeyboardInterrupt:
+        print("Demo stopped.")
+    finally:
+        communicator.stop()
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run RL agent or PID controller')
-    parser.add_argument('--mode', choices=['train', 'rl', 'pid', 'interactive', 'xr'], default='train',
-                        help='Mode to run the script in')
+    parser.add_argument('--mode', choices=['demo'], default='demo', help='Mode to run the script in')
     parser.add_argument('--checkpoint', type=str, help='Path to the checkpoint file to load')
     args = parser.parse_args()
 
@@ -694,10 +729,6 @@ if __name__ == '__main__':
     pwm_driver = initialize_pwm()
 
     min_angle, max_angle = calibrate_arm(sensor, pwm_driver)
-
-    # for testing
-    #min_angle = 0
-    #max_angle = 90
 
     # Initialize the environment with the sensor and pwm_driver
     env = TestBenchEnv(sensor, pwm_driver, max_angle, min_angle)
@@ -714,31 +745,9 @@ if __name__ == '__main__':
             print(f"Checkpoint file {args.checkpoint} not found. Starting from scratch.")
 
     # Initialize PID controller
-    pid_controller = PID(P=0.2, I=0.8, D=0.0)   # roughly tuned
-    pid_controller.setSampleTime(1.0 / LOOP_HZ)  # Set sample time to match the control loop frequency
-    pid_controller.setWindup(1.0)  # Windup guard set to 1.0
+    pid_controller = PID(P=0.2, I=0.8, D=0.0)
+    pid_controller.setSampleTime(1.0 / LOOP_HZ)
+    pid_controller.setWindup(1.0)
 
-
-    # epsilon-greedy exploration:
-    agent.set_exploration_type("epsilon-greedy")
-
-    # Boltzmann exploration:
-    #agent.set_exploration_type("boltzmann")
-
-    if args.mode == 'xr':
-        run_xr_mode(env, agent, pid_controller)
-    elif args.mode == 'train':
-        # Load PID data and prefill agent's memory
-        pid_data = load_pid_data('pid_data/pid_training_data.csv')
-        agent.prefill_memory(pid_data)
-        # Now start the RL training
-        scores, mean_scores = train(env, agent, debug=True)
-    elif args.mode == 'rl':
-        run_rl_without_training(env, agent)
-    elif args.mode == 'pid':
-        run_pid(env, pid_controller, save_data=True)
-    elif args.mode == 'interactive':
-        interactive_mode(env, agent, pid_controller)
-
-    plt.ioff()  # Turn off interactive mode
-    plt.show()  # Keep the final plot displayed
+    # Run the demo
+    run_demo(env, agent, pid_controller)
