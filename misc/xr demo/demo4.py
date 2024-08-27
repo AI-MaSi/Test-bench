@@ -3,6 +3,7 @@ import time
 import random
 
 NUM_SEND = 8
+#SERVER_URL = 'http://192.168.0.131:8000'
 SERVER_URL = 'http://192.168.0.131:8000'
 
 
@@ -38,7 +39,7 @@ if __name__ == "__main__":
         send_values(data)
         print(f"sent: {data.get('values')}")
 
-        time.sleep(1)  # Wait 1 second before fetching to allow processing time
+        time.sleep(1.0)  # Wait 1 second before fetching to allow processing time
         data = get_latest_values()
         print(f"received: {data.get('values')}")
-        time.sleep(1)
+        time.sleep(1.0)

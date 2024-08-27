@@ -81,13 +81,18 @@ def read_sensors_and_control(valve_value, last_angle, last_angle_time):
 
     # Angle
     angles = sensors.read_filtered(read='angle')
+
     boom_angle = angles['LiftBoom angle']
 
     # Rotation
     rotation_speed, last_angle, last_angle_time = calculate_angular_velocity(boom_angle, last_angle, last_angle_time)
 
     # Valve control
-    valve_angle = controller.update_values((0.070, valve_value), return_servo_angles=True)
+    valve_angles = controller.update_values((0.070, valve_value), return_servo_angles=True)
+
+    # Test servo angle
+    servo_angle = valve_angles["test_servo angle"]
+
 
     return pump_pressure, rotation_speed, last_angle, last_angle_time
 

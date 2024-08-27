@@ -71,8 +71,8 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 def run_server(port=8000):
     # Configure and start the HTTP server
-    #server_address = ('192.168.0.131', port)
-    server_address = ('localhost', port)
+    server_address = ('192.168.0.131', port)
+    #server_address = ('localhost', port)
     httpd = HTTPServer(server_address, RequestHandler)
     print(f"Server running on {server_address}")
     httpd.serve_forever()

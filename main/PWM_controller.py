@@ -92,7 +92,7 @@ class PWM_hat:
         self.deadzone = deadzone
 
         self.return_servo_angles = False
-        self.servo_angles = []
+        self.servo_angles = {}
 
         self.reset()
         self.validate_configuration()
@@ -186,6 +186,7 @@ class PWM_hat:
 
     def update_values(self, raw_values, min_cap=-1, max_cap=1, return_servo_angles=False):
         self.return_servo_angles = return_servo_angles
+        self.servo_angles.clear()
 
         if raw_values is None:
             self.reset()
@@ -221,9 +222,10 @@ class PWM_hat:
 
 
         if self.return_servo_angles:
-            angles_to_return = self.servo_angles.copy()  # Make a copy to return
-            self.servo_angles.clear()  # Clear the original list
-            return angles_to_return
+            #angles_to_return = self.servo_angles.copy()  # Make a copy to return
+            #self.servo_angles.clear()  # Clear the original list
+            #return angles_to_return
+            return self.servo_angles.copy()
 
     def handle_pump(self, values):
         pump_config = self.channel_configs['pump']
@@ -280,7 +282,7 @@ class PWM_hat:
                 self.kit.servo[config['output_channel']].angle = angle
 
                 if self.return_servo_angles:
-                    self.servo_angles.append(angle)
+                    self.servo_angles[f"{channel_name} angle"] = round(angle, 2)
 
     def __use_values(self, values):
 
