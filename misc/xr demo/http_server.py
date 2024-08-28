@@ -69,10 +69,13 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({'status': 'ok'}).encode())
 
 
-def run_server(port=8000):
+def run_server(addr='192.168.0.131', port=8000, local=True):
     # Configure and start the HTTP server
-    server_address = ('192.168.0.131', port)
-    #server_address = ('localhost', port)
+    if local:
+        server_address = ('localhost', port)
+    else:
+        server_address = (addr, port)
+
     httpd = HTTPServer(server_address, RequestHandler)
     print(f"Server running on {server_address}")
     httpd.serve_forever()
@@ -82,4 +85,4 @@ if __name__ == "__main__":
     udp_server = UDPServer()
 
     # Run the HTTP server
-    run_server()
+    run_server(local=False)
