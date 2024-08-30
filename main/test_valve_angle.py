@@ -28,15 +28,18 @@ with open(CONFIG_FILE, 'r') as file:
                                                                     30)  # Default to ±30 degrees if not specified
 
 # Initialize the pump driver
-pwm_driver = PWM_hat(simulation_mode=True,
+pwm_driver = PWM_hat(simulation_mode=False,
                      deadzone=0,
                      inputs=2,
                      input_rate_threshold=0,
                      config_file='test_bench_config.yaml')
 
 # Initialize the pressure sensors
-adc_sensors = ADC_hat(simulation_mode=True,
+adc_sensors = ADC_hat(simulation_mode=False,
                       config_file='sensor_config.yaml')
+                      
+                      
+adc_sensors.reset_angle_range()
 
 
 # Function to stop the ESC beep if first start
@@ -113,11 +116,13 @@ while running:
 
     # Get servo angles from the driver
     servo_angles = pwm_driver.update_values(values, min_cap=min_cap, return_servo_angles=True)
+    
+    #servo_angle = angles["test_servo"]
 
     # Read sensors (scaled and filtered)
-    pressure_readings = adc_sensors.read_scaled()
+    pressure_readings = adc_sensors.read_scaled(read="pressure")
     filtered_pressure_readings = adc_sensors.read_filtered(read="pressure")
-    angle_readings = adc_sensors.read_scaled()
+    angle_readings = adc_sensors.read_scaled(read="angle")
     filtered_angle_readings = adc_sensors.read_filtered(read="angle")
 
     # Get angle ranges
@@ -129,7 +134,7 @@ while running:
     # Render main control values
     pump_text = font.render(f'Pump Value: {pump_value:.3f}', True, (255, 255, 255))
     servo_text = font.render(f'Servo Input: {servo_input:.3f}', True, (255, 255, 255))
-    valve_text = font.render(f'Valve Angle: {servo_angles[0]:.1f}°', True, (255, 255, 255))
+    valve_text = font.render(f'Valve Angle: {servo_angles["test_servo angle"]:.1f}°', True, (255, 255, 255))
     boomAngle_text = font.render(f'Boom Angle: {angle_readings["LiftBoom angle"]:.1f}°', True, (255, 255, 255))
 
     window.blit(pump_text, (50, 50))

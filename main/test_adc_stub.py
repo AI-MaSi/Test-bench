@@ -120,6 +120,8 @@ while True:
     # Read scaled and filtered angle data
     angle_readings = sensors.read_filtered('angle')
 
+    print(sensors.get_angle_range())
+
     # test. Read everything
     #angle_readings2 = sensors.read_filtered()
     #print(f"Read everything filtered: {angle_readings2}")

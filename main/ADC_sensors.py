@@ -135,43 +135,53 @@ class ADC_hat:
 
     def read_filtered(self, read: Optional[str] = None) -> Dict[str, float]:
         """Read, scale, and filter sensor data."""
-        scaled_data = self.read_scaled(read)
+        scaled_data = self.read_scaled(read)  # Get scaled values directly from sensors
         filtered_data = {}
 
         for sensor_name, scaled_value in scaled_data.items():
             sensor_config = self.pressure_sensors.get(sensor_name) or self.angle_sensors.get(sensor_name)
+
             if not sensor_config:
+                print(f"[Debug] Unexpected sensor name '{sensor_name}' found in scaled_data.")
                 continue
 
-            sensor_filter_type = sensor_config.get('filter', self.filter_configs.get('default_filter', 'kalman'))
-            filtered_value = self._apply_filter([scaled_value], sensor_filter_type, sensor_name)[0]
-
             if sensor_name in self.angle_sensors:
-                min_angle = self.min_angle.get(sensor_name)
-                max_angle = self.max_angle.get(sensor_name)
+                if sensor_name not in self.min_angle:
+                    self.min_angle[sensor_name] = scaled_value
+                    self.max_angle[sensor_name] = scaled_value
 
-                if min_angle is not None and max_angle is not None:
-                    adjusted_value = filtered_value - min_angle
-                else:
-                    adjusted_value = filtered_value
+                # remember the smallest and largest SCALED value
+                self.min_angle[sensor_name] = min(self.min_angle[sensor_name], scaled_value)
+                self.max_angle[sensor_name] = max(self.max_angle[sensor_name], scaled_value)
 
-                filtered_data[sensor_name] = round(adjusted_value, self.decimals)
+                # print(f"MIN/MAX: {self.min_angle[sensor_name]} / {self.max_angle[sensor_name]}")
+
+                # Apply the filter
+                sensor_filter_type = sensor_config.get('filter', self.filter_configs.get('default_filter'))
+                filtered_value = self._apply_filter([scaled_value], sensor_filter_type, sensor_name)[0]
+
+                # print(f"filtered value: {filtered_value}")
+
+                # Adjust the filtered_value
+                #filtered_data[sensor_name] = round(abs(filtered_value - self.max_angle[sensor_name]), self.decimals)
+                filtered_data[sensor_name] = round(filtered_value - self.min_angle[sensor_name], self.decimals)
+
             else:
-                filtered_data[sensor_name] = filtered_value
+                filtered_data[sensor_name] = scaled_value
 
         return filtered_data
 
     def calibrate_pressure(self, voltage: float, sensor_config: Dict) -> float:
         """Calibrate pressure value based on the voltage."""
         if voltage > 0.40:
-            return round((1000 * (voltage - 0.5) / (4.5 - 0.5)) * sensor_config['calibration_value'], self.decimals)
+            return (1000 * (voltage - 0.5) / (4.5 - 0.5)) * sensor_config['calibration_value']
         else:
             return 0
 
     def calibrate_angle(self, voltage: float, sensor_config: Dict) -> float:
         """Calibrate angle value based on the voltage."""
-        steps_per_revolution = sensor_config.get('steps_per_revolution', 360)
-        angle = round((voltage - 0.5) * steps_per_revolution / (4.5 - 0.5), self.decimals)
+        steps_per_revolution = sensor_config.get('steps_per_revolution')
+        angle = (voltage - 0.5) * steps_per_revolution / (4.5 - 0.5)
         return angle
 
     def _update_sensor_range(self, sensor_type: str, sensor_name: str, value: float):
@@ -198,14 +208,14 @@ class ADC_hat:
             filter_settings.update(sensor_filter_config)
 
         if filter_type == 'low_pass':
-            alpha = filter_settings.get('alpha', 0.5)
+            alpha = filter_settings.get('alpha')
             return self._low_pass_filter(data, alpha)
         elif filter_type == 'kalman':
-            Q = filter_settings.get('Q', 1e-5)
-            R = filter_settings.get('R', 1e-2)
-            P = filter_settings.get('P', 1.0)
-            x0 = filter_settings.get('x0', data[0] if data else 0)
-            return self._kalman_filter(data, Q, R, P, x0)
+            Q = filter_settings.get('Q')
+            R = filter_settings.get('R')
+            P = filter_settings.get('P')
+
+            return self._kalman_filter(data, Q, R, P)  # Removed x0 here
         else:
             print(f"Unknown filter type: {filter_type}. Returning raw data.")
             return data
@@ -222,35 +232,47 @@ class ADC_hat:
         return filtered_data
 
     @staticmethod
-    def _kalman_filter(data: List[float], Q: float, R: float, P: float, x0: float) -> List[float]:
+    def _kalman_filter(data: List[float], Q: float, R: float, P: float) -> List[float]:
         """Apply a Kalman filter to the data."""
-        x = x0
-        filtered_data = []
-        for z in data:
-            P = P + Q
-            K = P / (P + R)
-            x = x + K * (z - x)
-            P = (1 - K) * P
+        if not data:
+            return []
+
+        # Initialize the first estimate with the first data point
+        x = data[0]
+        filtered_data = [x]  # Start the filtered data list with the initial value
+
+        for z in data[1:]:
+            # Prediction step
+            P = P + Q  # Increase the estimate uncertainty
+            # Measurement update
+            K = P / (P + R)  # Calculate the Kalman Gain
+            x = x + K * (z - x)  # Update the estimate with measurement z
+            P = (1 - K) * P  # Update the error covariance
+
             filtered_data.append(x)
+
         return filtered_data
 
-    def get_angle_range(self) -> Dict[str, Tuple[float, float]]:
+    def get_angle_range(self) -> Dict[str, Tuple[float, float, float, float]]:
         """Calculate and return the calibrated angle range for each sensor."""
         angle_ranges = {}
         for sensor_name in self.angle_sensors.keys():
-            min_angle = self.min_angle.get(sensor_name)
-            max_angle = self.max_angle.get(sensor_name)
+            min_angle = round(self.min_angle.get(sensor_name), self.decimals)
+            max_angle = round(self.max_angle.get(sensor_name), self.decimals)
+
             if min_angle is not None and max_angle is not None:
                 angle_range = max_angle - min_angle
-                angle_ranges[sensor_name] = (0, round(angle_range, self.decimals))
+                # round self.decimals
+                angle_ranges[sensor_name] = (0, angle_range, min_angle, max_angle)
             else:
-                angle_ranges[sensor_name] = (None, None)
+                angle_ranges[sensor_name] = (None, None, None, None)
+
         return angle_ranges
 
     def reset_angle_range(self):
         """Reset the range of calibrated angles."""
-        self.min_angle = {}
-        self.max_angle = {}
+        self.min_angle = {sensor: float('inf') for sensor in self.angle_sensors}
+        self.max_angle = {sensor: float('-inf') for sensor in self.angle_sensors}
 
     def get_pressure_range(self) -> Dict[str, Tuple[float, float]]:
         """Get the range of observed pressures for each sensor."""

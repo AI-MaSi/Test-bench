@@ -52,12 +52,6 @@ FILTER_CONFIG:
     # If the initial estimate is expected to be accurate, lower P. Otherwise, if unsure, a higher value may be used initially.
     P: 0.7
 
-    # Initial state estimate: This is the starting point for the state estimation.
-    # It should be set based on prior knowledge or a reasonable guess of the initial state.
-    # A value of 0.0 is used here as a default, but it can be adjusted according to the known starting conditions.
-    x0: 0.0  # Example: Initial guess of the state, adjust if there is prior information about the initial state
-
-
   # Optional: Individual sensor-specific filter configurations can be under the sensor if needed
   # For example:
   # sensor1:
@@ -65,7 +59,6 @@ FILTER_CONFIG:
   #   Q: 1e-6
   #   R: 1e-2
   #   P: 1.0
-  #   x0: 0.0
 
 
 #--------------------------------------------------------------
@@ -89,7 +82,6 @@ ANGLE_SENSORS:
       Q: 0.0001
       R: 0.001
       P: 0.5
-      x0: 0.0
 
   #test sensor666:
    # input: [b2, 3]               # [Board number, Port number]

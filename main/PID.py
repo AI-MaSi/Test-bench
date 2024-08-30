@@ -62,6 +62,7 @@ class PID:
             # Normalize output
             if self.max_output != 0:
                 self.output = max(-self.max_output, min(self.max_output, raw_output))
+                #print(f"[PID] Output: {self.output}")
             else:
                 self.output = raw_output
 
