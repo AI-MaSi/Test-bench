@@ -52,6 +52,37 @@ This project provides a Python script to display real-time network and system st
    - For wired connections, it will display "Wired" as the network name.
    - Every 5 seconds, the display toggles between the network information and CPU temperature.
 
+3. **Automatic Startup** (Recommended):
+   To run the script automatically at system startup after the network is available, you can set up a systemd service:
+
+   a. Create a new service file:
+      ```bash
+      sudo nano /etc/systemd/system/oled-display.service
+      ```
+
+   b. Add the following content to the file (adjust paths as necessary):
+      ```
+      [Unit]
+      Description=OLED Network and System Status Display
+      After=network.target
+
+      [Service]
+      ExecStart=/usr/bin/python3 /path/to/your/oled_network_display.py
+      Restart=always
+      User=pi
+
+      [Install]
+      WantedBy=multi-user.target
+      ```
+
+   c. Save and close the file, then enable and start the service:
+      ```bash
+      sudo systemctl enable oled-display.service
+      sudo systemctl start oled-display.service
+      ```
+
+   This will ensure that your OLED display script runs automatically after the network is available on system startup.
+
 ## Customization
 
 - **Toggle Interval**: Adjust the interval at which the display toggles between network information and CPU temperature by modifying the `if current_time - last_toggle_time >= 5:` line. Change `5` to your desired interval in seconds.
