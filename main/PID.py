@@ -1,3 +1,8 @@
+"""
+Simple PID controller implementation for process control, including options for proportional, integral, and derivative gains.
+Allows for output normalization, windup guarding, and sample time adjustment to control the rate of computation.
+"""
+
 import time
 
 class PID:
