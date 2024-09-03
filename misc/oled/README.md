@@ -44,7 +44,7 @@ This project provides a Python script to display real-time network and system st
 1. **Run the Script**: Execute the script using Python 3:
 
    ```bash
-   python3 oled_network_display.py
+   python3 oled.py
    ```
 
 2. **Display Information**:
@@ -67,7 +67,7 @@ This project provides a Python script to display real-time network and system st
       After=network.target
 
       [Service]
-      ExecStart=/usr/bin/python3 /path/to/your/oled_network_display.py
+      ExecStart=/usr/bin/python3 /path/to/your/oled.py
       Restart=always
       User=pi
 
