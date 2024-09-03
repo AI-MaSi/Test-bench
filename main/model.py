@@ -1,3 +1,10 @@
+"""
+Simplistic Linear Q-network implementation in PyTorch.
+This script defines a basic linear neural network model for Q-learning,
+along with a training routine to update the model's parameters using 
+the Q-learning algorithm.
+"""
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
