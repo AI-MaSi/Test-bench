@@ -1,3 +1,8 @@
+"""
+This file is used to quickly find the general Excavator specific PID tunes
+change PID tune in the pid_config.txt. Values will update here real-time.
+"""
+
 from PID import PID
 import ADC_sensors
 import PWM_controller
@@ -181,6 +186,7 @@ if __name__ == "__main__":
             # Run the control loop for the current setpoint
             main(LOOP_HZ, TOLERANCE, TIME_GOAL, setpoint, pid_controller, pump_pid_controller, adc, pwm)
         except KeyboardInterrupt:
+            # Reset the pump and set servo to midpoint
             pwm.update_values([-1.0, 0.0])
             print("Goodbye!")
             break
