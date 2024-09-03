@@ -1,3 +1,11 @@
+"""
+ADC Hat Simulator and Interface Implementation.
+This script provides a class to interface with an ADC Hat, allowing for both
+real-world and simulated sensor data acquisition. The ADC_hat class loads configuration 
+from a YAML file and supports various sensor types, including pressure and angle sensors. 
+In simulation mode, the class generates synthetic data for testing purposes.
+"""
+
 import yaml
 import math
 import time
@@ -306,12 +314,19 @@ class ADC_hat:
 
 
 class ADCPiStub:
+    """
+    ADC stub class used for simulating ADC behavior in the absence of actual hardware.
+    Generates synthetic voltage readings using sine waves and various types of noise.
+    Includes options for configuring the sine wave properties, noise levels, and adding spikes.
+    """
+    # TODO: noise and spike customization
+    # TODO: "black box" -data output
     def __init__(self, addr1, addr2, bit_rate, min_voltage, max_voltage, frequency):
         """
         Initialize a stub for simulating ADCPi behavior.
 
-        :param addr1: First I2C address.
-        :param addr2: Second I2C address.
+        :param addr1: First I2C address (does not matteri when using stubs).
+        :param addr2: Second I2C address (does not matter when using stubs).
         :param bit_rate: Bit rate of the ADC.
         :param min_voltage: Minimum voltage for simulation.
         :param max_voltage: Maximum voltage for simulation.
