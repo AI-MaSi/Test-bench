@@ -96,6 +96,4 @@ This project provides a Python script to display real-time network and system st
 - **Font Not Found**:
   - Make sure the `font_path` points to a valid font file. You can download a font like Montserrat from Google Fonts and place it in your project directory.
 
-## License
 
-This project is licensed under the MIT License. Feel free to use, modify, and distribute this script as per the license terms.

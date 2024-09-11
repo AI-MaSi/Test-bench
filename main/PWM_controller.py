@@ -1,50 +1,46 @@
-from time import sleep
+"""
+This module implements a PWM (Pulse Width Modulation) controller for servo motors and other PWM-controlled devices.
+It is designed to work with the Adafruit ServoKit library but can also run in a simulation mode.
+
+Key features:
+1. Configurable PWM channels using a YAML configuration file
+2. Support for different types of PMW outputs: angle (servo), throttle, switch(WIP), and pump
+3. Input rate monitoring to detect communication issues
+4. Deadzone implementation to prevent unwanted small movements
+5. Gamma correction for non-linear servo response
+6. Simulation mode for testing without hardware
+
+The main class, PWM_hat, handles:
+- Initialization of PWM channels
+- Parsing and validating configuration
+- Updating PWM values based on input
+- Handling special cases like pump control and track disabling
+- Resetting the controller to a safe state
+- Monitoring input rate for safety
+
+Usage:
+1. Create a YAML configuration file defining your PWM channels
+2. Initialize the PWM_hat with the configuration file and desired settings
+3. Call update_values() method with your input values to control the PWM outputs
+
+"""
+
+
 import threading
 import yaml
+import time
 
 try:
     from adafruit_servokit import ServoKit
     SERVOKIT_AVAILABLE = True
 except ImportError:
     SERVOKIT_AVAILABLE = False
-
-class ServoKitStub:
-    def __init__(self, channels):
-        self.channels = channels
-        self.servo = [ServoStub() for _ in range(channels)]
-        self.continuous_servo = [ContinuousServoStub() for _ in range(channels)]
-
-class ServoStub:
-    def __init__(self):
-        self._angle = 90
-
-    @property
-    def angle(self):
-        return self._angle
-
-    @angle.setter
-    def angle(self, value):
-        self._angle = max(0, min(180, value))
-        print(f"Servo angle set to: {self._angle}")
-
-class ContinuousServoStub:
-    def __init__(self):
-        self._throttle = 0
-
-    @property
-    def throttle(self):
-        return self._throttle
-
-    @throttle.setter
-    def throttle(self, value):
-        self._throttle = max(-1, min(1, value))
-        print(f"Continuous servo throttle set to: {self._throttle}")
+    print("PWM module not found. Running in simulation mode.")
 
 
 class PWM_hat:
-    def __init__(self, inputs, config_file, simulation_mode=False, pump_variable=True,
-                 tracks_disabled=False, input_rate_threshold=5, deadzone=6):
-
+    def __init__(self, inputs: int, config_file: str, simulation_mode: bool = False, pump_variable: bool = True,
+                 tracks_disabled: bool = False, input_rate_threshold: float = 5, deadzone: int = 6) -> None:
         pwm_channels = 16
         print(f"PWM channels in use: {pwm_channels}")
 
@@ -61,12 +57,21 @@ class PWM_hat:
         self.num_inputs = inputs
         self.num_outputs = pwm_channels
 
-        input_channels = [config['input_channel'] for config in self.channel_configs.values() if
-                          config['type'] != 'none' and config['input_channel'] != 'none']
+        self.input_rate_threshold = input_rate_threshold
+        self.input_event = threading.Event()
+        self.last_input_time = time.time()
+        self.monitor_thread = None
+        self.running = False
 
-        unique_input_channels = set(input_channels)
+        self.center_val_servo = 90
+        self.deadzone = deadzone
 
-        print(f"Input channels in the config: {unique_input_channels}")
+        self.return_servo_angles = False
+        self.servo_angles = {}
+
+        self.pump_enabled = True    # Enable pump by default
+        self.pump_variable_sum = 0.0
+        self.manual_pump_load = 0.0
 
         if SERVOKIT_AVAILABLE and not self.simulation_mode:
             self.kit = ServoKit(channels=pwm_channels)
@@ -76,30 +81,14 @@ class PWM_hat:
             print("Using ServoKitStub for simulation.")
             self.kit = ServoKitStub(channels=pwm_channels)
 
-        if self.num_inputs < len(unique_input_channels):
-            print(f"Warning: The number of inputs specified ({self.num_inputs}) is less than the number of unique input channels used in channel_configs ({len(unique_input_channels)}). This may result in some inputs not being correctly mapped.")
-            sleep(3)
-        elif self.num_inputs > len(unique_input_channels):
-            print(f"Warning: The number of inputs specified ({self.num_inputs}) is more than the number of unique input channels used in channel_configs ({len(unique_input_channels)}). This will result in some inputs being left out.")
-            sleep(3)
-
-        self.input_counter = 0
-        self.running = None
-        self.monitor_thread = None
-        self.input_rate_threshold = input_rate_threshold
-
-        self.center_val_servo = 90
-        self.deadzone = deadzone
-
-        self.return_servo_angles = False
-        self.servo_angles = {}
-
         self.reset()
         self.validate_configuration()
-        self.start_monitoring()
 
+        if input_rate_threshold > 0:    # Start monitoring if threshold is set
+            self.start_monitoring()
 
-    def validate_configuration(self):
+    def validate_configuration(self) -> None:
+        """Validate the configuration file."""
         required_keys = ['type', 'input_channel', 'output_channel', 'direction', 'offset']
         angle_specific_keys = ['multiplier_positive', 'multiplier_negative', 'gamma_positive', 'gamma_negative']
 
@@ -151,7 +140,8 @@ class PWM_hat:
         print("Validating configs done. Jee!")
         print("------------------------------------------\n")
 
-    def start_monitoring(self):
+    def start_monitoring(self) -> None:
+        """Start the input rate monitoring thread."""
         if self.monitor_thread is None or not self.monitor_thread.is_alive():
             self.running = True
             self.monitor_thread = threading.Thread(target=self.monitor_input_rate, daemon=True)
@@ -159,32 +149,30 @@ class PWM_hat:
         else:
             print("Monitoring is already running.")
 
-    def stop_monitoring(self):
+    def stop_monitoring(self) -> None:
+        """Stop the input rate monitoring thread."""
         self.running = False
         if self.monitor_thread is not None:
+            self.input_event.set()  # Wake up the thread if it's waiting
             self.monitor_thread.join()
             self.monitor_thread = None
             print("Stopped input rate monitoring...")
 
-    def monitor_input_rate(self, check_interval=0.2):
+    def monitor_input_rate(self) -> None:
+        """Monitor input rate using event-based approach."""
         print("Monitoring input rate...")
-        expected_inputs_per_check = (self.input_rate_threshold * check_interval)
         while self.running:
-            current_count = self.input_counter
-            sleep(check_interval)
-            if (self.input_counter - current_count) < expected_inputs_per_check:
-                self.reset(reset_pump=False)
-            self.input_counter = 0
+            # Wait for an input event or timeout
+            if self.input_event.wait(timeout=1.0 / self.input_rate_threshold):
+                self.input_event.clear()
+                self.last_input_time = time.time()
+            else:
+                # If we've timed out, check if we've exceeded our threshold
+                if time.time() - self.last_input_time > 1.0 / self.input_rate_threshold:
+                    print("Input rate too low. Resetting...")
+                    self.reset(reset_pump=False)
 
-    # WIP
-    # def get_current_rate(self):
-    # WIP
-    # monitor_input_rate could calculate incoming Hz rate and user could ask it
-    # Return the most recently calculated Hz, or None if not yet calculated
-    # return getattr(self, 'current_hz', None)
-    # pass
-
-    def update_values(self, raw_values, min_cap=-1, max_cap=1, return_servo_angles=False):
+    def update_values(self, raw_values, min_cap=-1, max_cap=1, return_servo_angles=False) :
         self.return_servo_angles = return_servo_angles
         self.servo_angles.clear()
 
@@ -202,6 +190,7 @@ class PWM_hat:
 
         deadzone_threshold = self.deadzone / 100.0 * (max_cap - min_cap)
 
+        self.pump_variable_sum = 0.0
         for channel_name, config in self.channel_configs.items():
             input_channel = config['input_channel']
             if input_channel == 'none' or input_channel >= len(raw_values):
@@ -216,15 +205,15 @@ class PWM_hat:
 
             self.values[config['output_channel']] = capped_value
 
-            self.input_counter += 1
+            if config.get('affects_pump', False):
+                self.pump_variable_sum += abs(capped_value)
 
-        self.__use_values(self.values)
-
+        self.handle_pump(self.values)
+        self.handle_angles(self.values)
+        # Signal the monitoring thread that we have new input
+        self.input_event.set()
 
         if self.return_servo_angles:
-            #angles_to_return = self.servo_angles.copy()  # Make a copy to return
-            #self.servo_angles.clear()  # Clear the original list
-            #return angles_to_return
             return self.servo_angles.copy()
 
     def handle_pump(self, values):
@@ -234,21 +223,25 @@ class PWM_hat:
         pump_idle = pump_config['idle']
         input_channel = pump_config.get('input_channel', None)
 
-        if input_channel is None:
+        if not self.pump_enabled:
+            throttle_value = -1.0  # Set to -1 when pump is disabled
+        elif input_channel is None:
             if self.pump_variable:
-                active_channels_count = sum(1 for channel, config in self.channel_configs.items()
-                                            if config.get('affects_pump', False) and abs(
-                    values[config['output_channel']]) > 0)
+                throttle_value = pump_idle + (pump_multiplier * self.pump_variable_sum)
             else:
-                active_channels_count = 2
+                throttle_value = pump_idle + pump_multiplier
 
-            throttle_value = pump_idle + ((pump_multiplier / 100) * active_channels_count)
+            # Add manual pump load
+            throttle_value += self.manual_pump_load
         else:
+            # pump_variable arg does not affect anything if input channel is set for the pump
             throttle_value = values[input_channel]
 
         throttle_value = max(-1.0, min(1.0, throttle_value))
 
         self.kit.continuous_servo[pump_channel].throttle = throttle_value
+
+        return throttle_value  # Return the final throttle value for debugging
 
     def handle_angles(self, values):
         for channel_name, config in self.channel_configs.items():
@@ -284,17 +277,14 @@ class PWM_hat:
                 if self.return_servo_angles:
                     self.servo_angles[f"{channel_name} angle"] = round(angle, 2)
 
-    def __use_values(self, values):
-
-        self.handle_pump(values)
-
-        self.handle_angles(values)
-
-        self.input_counter += 1
-
-        # more different
-
     def reset(self, reset_pump=True, pump_reset_point=-1.0):
+        """
+        Reset the controller to the initial state.
+
+        :param reset_pump: Reset the pump to the idle state.
+        :param pump_reset_point: The throttle value to set the pump to when resetting. ESC dependant.
+        """
+
         for config in self.channel_configs.values():
             if config['type'] == 'angle':
                 self.kit.servo[config['output_channel']].angle = self.center_val_servo + config.get('offset', 0)
@@ -302,41 +292,42 @@ class PWM_hat:
         if reset_pump and 'pump' in self.channel_configs:
             self.kit.continuous_servo[self.channel_configs['pump']['output_channel']].throttle = pump_reset_point
 
-    # Update values during driving
     def set_threshold(self, number_value):
-        if not isinstance(number_value, (int, float)):
-            # raise TypeError("Threshold value must be an integer or float.")
-            print("Threshold value must be an integer.")
+        """Update the input rate threshold value."""
+        if not isinstance(number_value, (int, float)) or number_value <= 0:
+            print("Threshold value must be a positive number.")
             return
         self.input_rate_threshold = number_value
         print(f"Threshold rate set to: {self.input_rate_threshold}Hz")
 
     def set_deadzone(self, int_value):
+        """Update the Deadzone value"""
         if not isinstance(int_value, int):
-            # raise TypeError("Deadzone value must be an integer.")
             print("Deadzone value must be an integer.")
             return
         self.deadzone = int_value
         print(f"Deadzone set to: {self.deadzone}%")
 
     def set_tracks(self, bool_value):
+        """Enable/Disable tracks"""
         if not isinstance(bool_value, bool):
-            # raise TypeError("Tracks value must be a boolean (True or False).")
             print("Tracks value value must be boolean.")
             return
         self.tracks_disabled = bool_value
         print(f"Tracks boolean set to: {self.tracks_disabled}!")
 
     def set_pump(self, bool_value):
+        """Enable/Disable pump"""
         if not isinstance(bool_value, bool):
-            # raise TypeError("Pump value must be a boolean (True or False).")
-            print("Pump value value must be boolean.")
+            print("Pump value must be boolean.")
             return
-        self.toggle_pump = bool_value
-        print(f"Pump boolean set to: {self.toggle_pump}!")
+        self.pump_enabled = bool_value
+        print(f"Pump enabled set to: {self.pump_enabled}!")
+        # Update pump state immediately
+        # self.handle_pump(self.values)
 
-    # update config file while the code is running
     def update_config(self, config_file):
+        """Update the configuration file and reinitialize the controller."""
         # Reset the controller
         self.reset()
 
@@ -352,9 +343,6 @@ class PWM_hat:
         if SERVOKIT_AVAILABLE and not self.simulation_mode:
             self.kit = ServoKit(channels=self.num_outputs)
 
-        # Reset input counter and other necessary variables
-        self.input_counter = 0
-
         # Restart monitoring if it was running
         if self.running:
             self.stop_monitoring()
@@ -362,8 +350,8 @@ class PWM_hat:
 
         print(f"Configuration updated successfully from {config_file}")
 
-    # Print the input mappings
     def print_input_mappings(self):
+        """Print the input mappings for each channel."""
         print("Input mappings:")
         input_to_name = {}
         for channel_name, config in self.channel_configs.items():
@@ -379,4 +367,67 @@ class PWM_hat:
                 print(f"Input {input_num}: {names}")
             else:
                 print(f"Input {input_num}: Not assigned")
+
+    def update_pump(self, adjustment, debug=False):
+        """
+        Manually update the pump load.
+
+        :param adjustment: The adjustment to add to the pump load (float between -1.0 and 1.0)
+        :param debug: If True, print debug information
+        """
+        self.manual_pump_load = max(-1.0, min(1.0, self.manual_pump_load + adjustment))
+
+        # Re-calculate pump throttle with new manual load
+        current_throttle = self.handle_pump(self.values)
+
+        if debug:
+            print(f"Current pump throttle: {current_throttle:.2f}")
+            print(f"Current manual pump load: {self.manual_pump_load:.2f}")
+            print(f"Current pump variable sum: {self.pump_variable_sum:.2f}")
+
+    def reset_pump_load(self, debug=False):
+        """
+        Reset the manual pump load to zero.
+
+        :param debug: If True, print debug information
+        """
+        self.manual_pump_load = 0.0
+
+        # Re-calculate pump throttle without manual load
+        current_throttle = self.handle_pump(self.values)
+
+        if debug:
+            print(f"Pump load reset. Current pump throttle: {current_throttle:.2f}")
+
+class ServoKitStub:
+    def __init__(self, channels):
+        self.channels = channels
+        self.servo = [ServoStub() for _ in range(channels)]
+        self.continuous_servo = [ContinuousServoStub() for _ in range(channels)]
+
+class ServoStub:
+    def __init__(self):
+        self._angle = 90
+
+    @property
+    def angle(self):
+        return self._angle
+
+    @angle.setter
+    def angle(self, value):
+        self._angle = max(0, min(180, value))
+        print(f"Servo angle set to: {self._angle}")
+
+class ContinuousServoStub:
+    def __init__(self):
+        self._throttle = 0
+
+    @property
+    def throttle(self):
+        return self._throttle
+
+    @throttle.setter
+    def throttle(self, value):
+        self._throttle = max(-1, min(1, value))
+        print(f"Continuous servo throttle set to: {self._throttle}")
 

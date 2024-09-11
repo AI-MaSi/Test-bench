@@ -1,11 +1,29 @@
 """
-ADC Hat Simulator and Interface Implementation.
-This script provides a class to interface with an ADC Hat, allowing for both
-real-world and simulated sensor data acquisition. The ADC_hat class loads configuration 
-from a YAML file and supports various sensor types, including pressure and angle sensors. 
-In simulation mode, the class generates synthetic data for testing purposes.
-"""
+This module implements an interface for ABelectronics ADCPi Converter to work with sensors using the ADCPi library.
 
+Key features:
+1. Configurable ADC channels using a YAML configuration file
+2. Support for different types of sensors: pressure and angle sensors
+3. Raw voltage reading and scaling based on sensor type
+4. Calibration functions for pressure and angle sensors
+5. Various filtering options including low-pass and Kalman filters
+6. Simulation mode for testing without hardware
+7. Tracking and resetting of sensor ranges
+
+The main class, ADC_hat, handles:
+- Initialization of ADC boards based on configuration
+- Reading raw voltage values from sensors
+- Scaling and calibrating sensor readings
+- Applying filters to sensor data
+- Tracking the range of sensor values
+- Simulating ADC behavior when hardware is not available with synthetic voltage generation
+
+Usage:
+1. Create a YAML configuration file defining your ADC setup and sensors
+2. Initialize the ADC_hat with the configuration file and desired settings
+3. Use methods like read_raw(), read_scaled(), or read_filtered() to get sensor data
+4. Optionally use simulation mode for testing without physical hardware
+"""
 import yaml
 import math
 import time
