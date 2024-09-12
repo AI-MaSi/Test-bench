@@ -4,6 +4,7 @@ import time
 
 import ADC_sensors
 import PWM_controller
+from joystick import XboxController
 
 IS_SIMULATION = True
 TEST_DURATION = 120  # Duration of test in seconds
@@ -22,6 +23,9 @@ adc = ADC_sensors.ADC_hat(config_file='sensor_config.yaml',
                           min_sim_voltage=0.5,
                           max_sim_voltage=4.5,
                           frequency=0.1)
+
+# haha
+joy = XboxController()
 
 
 def calibrate():
@@ -77,11 +81,13 @@ def calibrate():
     print("Calibration complete!")
 
 
-# Placeholder for game controller input
 def get_controller_input():
-    # Replace this with your game controller input code
-    # This should return a value between -1 and 1
-    return 0  # Placeholder return value
+    #input = 0
+    #print(input)
+
+    inputs = joy.read()
+    print(inputs)
+    return input
 
 
 def read_sensors():
@@ -157,4 +163,8 @@ def main():
 
 
 if __name__ == "__main__":
+    if not IS_SIMULATION:
+        # skip calibration if not in simulation mode
+        calibrate()
+
     main()

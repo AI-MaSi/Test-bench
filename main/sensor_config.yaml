@@ -80,7 +80,7 @@ ANGLE_SENSORS:
     filter: "kalman"              # Optional: kalman override
     kalman:
       Q: 0.0001
-      R: 0.001
+      R: 0.005
       P: 0.5
 
   #test sensor666:

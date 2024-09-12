@@ -1,8 +1,3 @@
-"""
-Simple PID controller implementation for process control, including options for proportional, integral, and derivative gains.
-Allows for output normalization, windup guarding, and sample time adjustment to control the rate of computation.
-"""
-
 import time
 
 class PID:
@@ -17,6 +12,11 @@ class PID:
 
         self.max_output = max_output  # Maximum value for normalization
         self.clear()
+
+        # Ramp-up related attributes
+        self.ramp_up_enabled = False
+        self.ramp_rate = 0.1  # Default ramp rate (output units per second)
+        self.last_output = 0.0
 
     def clear(self):
         """Clears PID computations and coefficients"""
@@ -61,15 +61,28 @@ class PID:
             # Compute raw output
             raw_output = self.PTerm + (self.Ki * self.ITerm) + (self.Kd * self.DTerm)
 
-            # Debugging
-            #print(f"PTerm: {self.PTerm}, ITerm: {self.ITerm}, DTerm: {self.DTerm}, raw_output: {raw_output}")
-
             # Normalize output
             if self.max_output != 0:
-                self.output = max(-self.max_output, min(self.max_output, raw_output))
-                #print(f"[PID] Output: {self.output}")
+                normalized_output = max(-self.max_output, min(self.max_output, raw_output))
             else:
-                self.output = raw_output
+                normalized_output = raw_output
+
+            # Apply ramp-up if enabled
+            if self.ramp_up_enabled:
+                max_change = self.ramp_rate * delta_time
+                if abs(normalized_output) > abs(self.last_output):
+                    # Ramping up
+                    if normalized_output > self.last_output:
+                        self.output = min(self.last_output + max_change, normalized_output)
+                    else:
+                        self.output = max(self.last_output - max_change, normalized_output)
+                else:
+                    # Allow immediate decrease
+                    self.output = normalized_output
+            else:
+                self.output = normalized_output
+
+            self.last_output = self.output
 
     def setKp(self, proportional_gain):
         """Sets Proportional Gain"""
@@ -94,3 +107,15 @@ class PID:
     def setMaxOutput(self, max_output):
         """Sets the maximum absolute value for normalized output"""
         self.max_output = max_output
+
+    def set_rampup(self, enabled, rate=None):
+        """
+        Enables or disables the ramp-up feature.
+
+        :param enabled: Boolean to enable or disable ramp-up
+        :param rate: Optional parameter to set the ramp rate (output units per second)
+        """
+        self.ramp_up_enabled = enabled
+        if rate is not None:
+            self.ramp_rate = rate
+        self.last_output = self.output  # Initialize last output to current output

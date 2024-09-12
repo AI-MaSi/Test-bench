@@ -1,37 +1,15 @@
-"""
-This file is used to quickly find the general Excavator specific PID tunes
-change PID tune in the pid_config.txt. Values will update here real-time.
-"""
-
-import threading
-import queue
-from PID import PID
-import ADC_sensors
-import PWM_controller
 import time
 import random
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
+from PID import PID
+import ADC_sensors
+import PWM_controller
+import boom_calibration
 
-SIMULATION = True
-LOOP_HZ = 10  # Control loop frequency in Hz
-TOLERANCE = 1  # +- degrees
-TIME_GOAL = 10  # seconds needed to stay until new setpoint is generated
-PUMP_IDLE = 0.060
-
-# Create a queue for thread-safe data passing
-plot_queue = queue.Queue()
-
-# Create the plot
-fig, ax = plt.subplots()
-setpoint_line, = ax.plot([], [], label='Setpoint')
-current_angle_line, = ax.plot([], [], label='Current Angle')
-ax.set_xlabel('Time (s)')
-ax.set_ylabel('Angle (degrees)')
-ax.set_title('Step Response')
-ax.legend()
-
-time_data, setpoint_data, current_angle_data = [], [], []
+SIMULATION = False
+TOLERANCE = 2  # +- degrees
+TIME_GOAL = 7  # seconds needed to stay until new setpoint is generated
+PUMP_IDLE = 0.050
 
 
 def read_sensors(adc):
@@ -40,179 +18,102 @@ def read_sensors(adc):
     return angles["LiftBoom angle"], pressures["Pump"]
 
 
-def calibrate_boom(adc, pwm):
-    print("Starting calibration...")
-
-    # Drive boom up
-    pwm.update_values([0.070, 1])
-    time.sleep(1)  # Wait for pressure to stabilize
-
-    while True:
-        current_angle, current_pressure = read_sensors(adc)
-        print(f"[UP] Pressure: {current_pressure:.1f}, Current angle: {current_angle:.2f}")
-        if current_pressure >= 200:
-            pwm.update_values([0.070, 0])  # Stop
-            break
-        time.sleep(0.1)
-
-    # Drive boom down
-    pwm.update_values([0.070, -1])
-    time.sleep(1)  # Wait for pressure to stabilize
-
-    while True:
-        current_angle, current_pressure = read_sensors(adc)
-        print(f"[DOWN] Pressure: {current_pressure:.1f}, Current angle: {current_angle:.2f}")
-        if current_pressure >= 200:
-            pwm.update_values([0.070, 0])  # Stop
-            break
-        time.sleep(0.1)
-
-    # Get calibrated range
-    ranges = adc.get_angle_range()
-    min_angle, max_angle, min_raw, max_raw = ranges["LiftBoom angle"]
-    print(f"Calibrated angle range: {min_angle:.2f} ({min_raw:.2f}) to {max_angle:.2f} ({max_raw:.2f})")
-
-    # Move to midpoint
-    mid_angle = (min_angle + max_angle) / 2
-    print(f"Moving to mid point: {mid_angle:.2f}")
-
-    while True:
-        current_angle, _ = read_sensors(adc)
-        if abs(current_angle - mid_angle) < 1:  # 1 degree tolerance
-            pwm.update_values([0.070, 0])  # Stop
-            print(f"Arm positioned at middle angle: {current_angle:.1f}")
-            break
-        elif current_angle < mid_angle:
-            pwm.update_values([0.070, -0.5])  # Move up slowly
-        else:
-            pwm.update_values([0.070, 0.5])  # Move down slowly
-        time.sleep(0.1)
-
-    print("Calibration complete!")
-
-
 def read_pid_values(filename="pid_config.txt"):
     """Read PID values from a configuration file."""
     pid_values = {}
-    with open(filename, 'r') as file:
-        for line in file:
-            if "=" in line:
-                key, value = line.strip().split('=')
-                pid_values[key] = float(value)
-    return pid_values
+    try:
+        with open(filename, 'r') as file:
+            for line in file:
+                if "=" in line:
+                    key, value = line.strip().split('=')
+                    pid_values[key] = float(value)
+        return pid_values
+    except Exception as e:
+        print(f"Error reading PID values: {e}")
+        raise
 
 
-def update_plot(frame):
-    while not plot_queue.empty():
-        data = plot_queue.get()
-        time_data.append(data['time'])
-        setpoint_data.append(data['setpoint'])
-        current_angle_data.append(data['current_angle'])
-
-    setpoint_line.set_data(time_data, setpoint_data)
-    current_angle_line.set_data(time_data, current_angle_data)
-    ax.relim()
-    ax.autoscale_view()
-    return setpoint_line, current_angle_line
-
-
-def plotting_thread():
-    print("Plotting thread started")
-    plt.ion()  # Turn on interactive mode
-    ani = FuncAnimation(fig, update_plot, interval=100, blit=True)
-    plt.show()
-    print("Plotting thread show() called")
-
-
-def main(LOOP_HZ, TOLERANCE, TIME_GOAL, setpoint, pid_controller, pump_pid_controller, adc, pwm):
-    time_at_setpoint = 0  # Initialize time spent at setpoint
-    last_pid_values = read_pid_values()
+def run_pid_control(setpoint, pid_controller, pump_pid_controller, adc, pwm):
+    time_at_setpoint = 0
     start_time = time.time()
+    time_data, setpoint_data, current_angle_data, pump_speed_data = [], [], [], []
 
     while True:
         current_time = time.time() - start_time
-        current_angle, current_pressure = read_sensors(adc)
+        current_angle, _ = read_sensors(adc)
 
-        print(f"Current angle: {current_angle:.1f} / target: {setpoint:.1f}")
+        time_data.append(current_time)
+        setpoint_data.append(setpoint)
+        current_angle_data.append(current_angle)
 
-        # Add data to the queue for plotting
-        plot_queue.put({
-            'time': current_time,
-            'setpoint': setpoint,
-            'current_angle': current_angle
-        })
-
-        # Read and update PID values from file if they have changed
-        current_pid_values = read_pid_values()
-        if current_pid_values != last_pid_values:
-            pid_controller.setKp(current_pid_values['P'])
-            pid_controller.setKi(current_pid_values['I'])
-            pid_controller.setKd(current_pid_values['D'])
-            pump_pid_controller.setKp(current_pid_values['Pump_P'])
-            pump_pid_controller.setKi(current_pid_values['Pump_I'])
-            pump_pid_controller.setKd(current_pid_values['Pump_D'])
-            last_pid_values = current_pid_values
-            print(
-                f"Updated PID values: P={current_pid_values['P']}, I={current_pid_values['I']}, D={current_pid_values['D']}")
-            print(
-                f"Updated Pump PID values: P={current_pid_values['Pump_P']}, I={current_pid_values['Pump_I']}, D={current_pid_values['Pump_D']}")
-
-        # Update the main PID controller
+        # Update PID controllers
         pid_controller.SetPoint = setpoint
         pid_controller.update(current_angle)
-        action = -pid_controller.output
-        print(f"[PID] action: {action:.2f}")
+        action = -pid_controller.output  # Use output directly
 
-        # Calculate pump speed adjustment based on the distance from setpoint
-        pump_pid_controller.SetPoint = 0  # Target is zero error
+        pump_pid_controller.SetPoint = 0
         pump_pid_controller.update(abs(setpoint - current_angle))
-        pump_speed = PUMP_IDLE + abs(pump_pid_controller.output)
-        print(f"[Pump PID] speed: {pump_speed:.2f}")
+        pump_output = pump_pid_controller.output
 
-        # Update PWM with the action and pump speed
+        # Calculate pump speed
+        pump_speed = PUMP_IDLE + abs(pump_output)
+        pump_speed_data.append(pump_speed)
+
+        # Update PWM
         pwm.update_values([pump_speed, action])
 
-        # Check if the current angle is within the tolerance range
+        # Check if setpoint is reached
         if abs(current_angle - setpoint) <= TOLERANCE:
-            time_at_setpoint += 1 / LOOP_HZ  # Increment time at setpoint
+            time_at_setpoint += 0.1  # Assuming 10Hz loop
         else:
-            time_at_setpoint = 0  # Reset time if out of tolerance
+            time_at_setpoint = 0
 
-        # If the setpoint is held within tolerance for the specified time, return
         if time_at_setpoint >= TIME_GOAL:
             print(f"Setpoint {setpoint} reached and held for {TIME_GOAL} seconds.")
-            return  # Exit the function
+            break
 
-        # Wait for the next loop iteration
-        time.sleep(1 / LOOP_HZ)
+        time.sleep(0.1)  # 10Hz loop
+
+    return time_data, setpoint_data, current_angle_data, pump_speed_data
 
 
-if __name__ == "__main__":
-    # get PID values from .txt file
-    pid_values = read_pid_values()
+def save_step_response_graph(time_data, setpoint_data, current_angle_data, pump_speed_data, run_number, pid_values):
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
 
-    # init PID for position control
-    pid_controller = PID(P=pid_values['P'], I=pid_values['I'], D=pid_values['D'])
-    pid_controller.setSampleTime(1.0 / pid_values['LOOP_HZ'])
-    pid_controller.setMaxOutput(1.0)
-    pid_controller.setWindup(1.0)
+    # Plot angle data
+    ax1.plot(time_data, setpoint_data, label='Setpoint')
+    ax1.plot(time_data, current_angle_data, label='Current Angle')
+    ax1.set_ylabel('Angle (degrees)')
+    ax1.legend()
+    ax1.set_title(f'Step Response - Run {run_number}')
 
-    # init PID for pump speed control
-    pump_pid_controller = PID(P=pid_values['Pump_P'], I=pid_values['Pump_I'], D=pid_values['Pump_D'])
-    pump_pid_controller.setSampleTime(1.0 / pid_values['LOOP_HZ'])
-    pump_pid_controller.setMaxOutput(0.05)
-    pump_pid_controller.setWindup(1.0)
+    # Plot pump speed data
+    ax2.plot(time_data, pump_speed_data, label='Pump Speed')
+    ax2.set_xlabel('Time (s)')
+    ax2.set_ylabel('Pump Speed')
+    ax2.legend()
 
-    # init PWM controller
+    # Add PID values and loop frequency to the plot
+    pid_info = f"Position PID: P={pid_values['P']:.4f}, I={pid_values['I']:.4f}, D={pid_values['D']:.4f}\n" \
+               f"Pump PID: P={pid_values['Pump_P']:.4f}, I={pid_values['Pump_I']:.4f}, D={pid_values['Pump_D']:.4f}\n" \
+               f"Loop Frequency: {pid_values['LOOP_HZ']:.2f} Hz"
+    fig.text(0.1, 0.01, pid_info, fontsize=10, verticalalignment='bottom')
+
+    plt.tight_layout()
+    plt.savefig(f'step_response_graph_{run_number}.png')
+    plt.close()
+
+
+def main():
+    # Initialize ADC and PWM
+    #TODO: test with more pump speed and less valve multiplier!
     pwm = PWM_controller.PWM_hat(config_file='test_bench_config.yaml',
-                                 inputs=2,  # pump, valve
+                                 inputs=2,
                                  simulation_mode=SIMULATION,
-                                 pump_variable=False,  # This is used for active channels -based control
+                                 pump_variable=True,
                                  tracks_disabled=True,
                                  input_rate_threshold=0,
                                  deadzone=0)
-
-    # init sensors
     adc = ADC_sensors.ADC_hat(config_file='sensor_config.yaml',
                               decimals=4,
                               simulation_mode=SIMULATION,
@@ -220,35 +121,52 @@ if __name__ == "__main__":
                               max_sim_voltage=4.5,
                               frequency=0.1)
 
-    adc.list_sensors()
-    time.sleep(2)
+    # Get initial PID values
+    pid_values = read_pid_values()
 
-    #calibrate_boom(adc, pwm)
+    # Initialize PID controllers
+    pid_controller = PID(P=pid_values['P'], I=pid_values['I'], D=pid_values['D'])
+    pid_controller.setMaxOutput(1.0)
+    pid_controller.setWindup(1.0)
 
-    # Start the plotting thread
-    plot_thread = threading.Thread(target=plotting_thread)
-    plot_thread.daemon = True
-    plot_thread.start()
-    print("Plotting thread started")
+    pump_pid_controller = PID(P=pid_values['Pump_P'], I=pid_values['Pump_I'], D=pid_values['Pump_D'])
+    pump_pid_controller.setMaxOutput(0.12)
+    pump_pid_controller.setWindup(0.2)
+    pump_pid_controller.set_rampup(True, 0.06)
 
+    # Set sample time for both controllers
+    pid_controller.setSampleTime(1.0 / pid_values['LOOP_HZ'])
+    pump_pid_controller.setSampleTime(1.0 / pid_values['LOOP_HZ'])
+
+    # Calibrate boom
+    min_angle, max_angle = boom_calibration.calibrate(adc, pwm, tolerance=TOLERANCE)
+
+    run_number = 1
     while True:
-        try:
-            # Generate a new random setpoint between 5-70 degrees
-            setpoint = round(random.uniform(5, 70), 2)
-            print(f"New setpoint: {setpoint:.1f}!")
+        # Generate random setpoint
+        end_slack = 3
+        setpoint = round(random.uniform(min_angle + end_slack, max_angle - end_slack), 2)
+        print(f"New setpoint: {setpoint:.1f}")
 
-            # Run the control loop for the current setpoint
-            main(LOOP_HZ, TOLERANCE, TIME_GOAL, setpoint, pid_controller, pump_pid_controller, adc, pwm)
+        # Run PID control and record values
+        time_data, setpoint_data, current_angle_data, pump_speed_data = run_pid_control(
+            setpoint, pid_controller, pump_pid_controller, adc, pwm
+        )
 
-            # Add a small delay to allow for plot updates
-            plt.pause(0.1)
-        except KeyboardInterrupt:
-            # Reset the pump and set servo to midpoint
-            pwm.update_values([-1.0, 0.0])
-            print("Goodbye!")
+        # Save step response graph
+        save_step_response_graph(time_data, setpoint_data, current_angle_data, pump_speed_data, run_number, pid_values)
+
+        run_number += 1
+
+        # Optional: add a delay between runs or a way to exit the loop
+        user_input = input("Press Enter to continue or 'q' to quit: ")
+        if user_input.lower() == 'q':
             break
 
-    print("Main loop exited")
-    # Keep the plot open until manually closed
-    plt.ioff()
-    plt.show()
+    # Cleanup
+    pwm.update_values([-1.0, 0.0])  # Reset pump and servo
+    print("Process complete. Exiting.")
+
+
+if __name__ == "__main__":
+    main()
