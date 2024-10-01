@@ -6,7 +6,9 @@ import threading
 import queue
 
 NUM_VALUES = 8
-SERVER_URL = 'http://192.168.0.131:8000'
+#SERVER_URL = 'http://192.168.0.131:8000'
+#SERVER_URL = 'http://192.168.2.204:8000'
+SERVER_URL = 'http://192.168.2.133:8000'
 # localhost
 # SERVER_URL = 'http://localhost:8000'
 

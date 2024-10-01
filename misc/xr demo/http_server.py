@@ -4,6 +4,9 @@ import json
 NUM_SEND = 8
 NUM_RECV = 8
 
+# ADDR = '192.168.2.204'
+ADDR = '192.168.2.133'
+PORT = 8000
 
 class UDPServer:
     def __init__(self):
@@ -69,7 +72,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({'status': 'ok'}).encode())
 
 
-def run_server(addr='192.168.0.131', port=8000, local=True):
+def run_server(addr=ADDR, port=PORT, local=True):
     # Configure and start the HTTP server
     if local:
         server_address = ('localhost', port)
